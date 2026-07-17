@@ -1,0 +1,21 @@
+{
+  "name": "safe-outputs",
+  "version": "0.1.0",
+  "description": "Context-aware MCP servers that apply narrowly-scoped GitHub writes (\"safe outputs\") for sandboxed agents.",
+  "type": "module",
+  "bin": {
+    "safe-outputs": "src/cli.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "private": false
+}
