@@ -4,6 +4,15 @@ Prototype status and remaining work. Intended to be picked up in a Codespace
 (Node 20+). Nothing here needs installing beyond Node — the app has zero runtime
 dependencies.
 
+## ⚠️ No Actions workflows in this repo
+
+Do **not** add `.github/workflows/` to this repo. It is a personal public repo and
+workflow runs would eat into the personal Actions budget. This repo is **code only**,
+referenced from elsewhere. End-to-end testing that needs a workflow lives in an
+org-owned repo (e.g. `github/ericsciple-planning`), which references this code by
+`@ref`. (Consider disabling Actions entirely in Settings → Actions to avoid default
+setup features like CodeQL default setup also consuming budget.)
+
 ## Verify
 
 - [ ] Run the unit tests: `npm test` (uses `node --test`; validator, context,
