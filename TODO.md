@@ -24,11 +24,16 @@ dependencies.
 
 ## Token handling (important)
 
-- The server reads `GITHUB_TOKEN` from its **process environment** and never from
-  the MCP config. In the microVM harness this env is set **host-side** by the
-  harness when it launches the server; the guest's MCP config must NOT contain the
-  real token (that would expose it to the agent).
-- For standalone/dev runs, set `GITHUB_TOKEN` yourself before launching.
+- The server reads `GITHUB_TOKEN` from its **process environment**, supplied the standard
+  MCP way — the `env` block of its MCP server config, e.g.
+  `"env": { "GITHUB_TOKEN": "${{ github.token }}" }`. Safe outputs are **not actions** and
+  have **no inputs**; this is just how you give any MCP server a secret. (`${{ github.token }}`
+  is expanded by Actions because the harness takes the MCP config as an action input.)
+- Inside a sandboxing harness the server runs **host-side** with that env, and the harness
+  keeps the secret out of the **guest's** copy of the config (the agent must never see it).
+  This host-side / scrub behavior is the harness's job for *any* server with secrets — not
+  special to safe outputs.
+- For standalone/dev runs, set `GITHUB_TOKEN` in the environment when launching.
 
 ## Remaining features (later)
 
