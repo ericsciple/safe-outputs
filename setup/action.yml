@@ -1,25 +1,32 @@
 name: "Setup safe-outputs"
 description: >-
-  Install the safe-outputs CLI on the runner PATH so it can be referenced as an MCP
-  server (e.g. command: safe-outputs) by a sandbox/harness such as microvm-agent.
+  Put the safe-outputs CLI on the runner PATH (job-scoped) so it can be referenced as
+  an MCP server (e.g. command: safe-outputs) by a sandbox/harness such as microvm-agent.
 author: "ericsciple"
 
 runs:
   using: "composite"
   steps:
-    - name: Install safe-outputs CLI
+    - name: Put safe-outputs on PATH (job-scoped)
       shell: bash
       run: |
         set -e
-        # The whole repo is checked out at the `@ref` used in `uses:`. GITHUB_ACTION_PATH
-        # points at this setup/ dir, so the CLI package is its parent — install from disk,
-        # no re-download, and the version always matches the ref you pinned.
+        # The whole repo is checked out at the `@ref` used in `uses:`, and
+        # GITHUB_ACTION_PATH points at this setup/ dir — so the CLI is its parent.
+        # safe-outputs is zero-dependency, so no install is needed: drop a tiny
+        # wrapper in a job-scoped bin dir and add it to PATH via the runner's
+        # add-path command. This avoids a GLOBAL npm install, which would leak
+        # across jobs on self-hosted runners.
         root="$(cd "$GITHUB_ACTION_PATH/.." && pwd)"
-        echo "Installing safe-outputs from ${root}"
-        npm install -g "$root"
-        # Ensure npm's global bin is on PATH for later steps (usually already is).
-        globalbin="$(npm prefix -g)/bin"
-        echo "$globalbin" >> "$GITHUB_PATH"
-        export PATH="$globalbin:$PATH"
+        bindir="${RUNNER_TEMP:-/tmp}/safe-outputs-bin"
+        mkdir -p "$bindir"
+        cat > "$bindir/safe-outputs" <<EOF
+        #!/usr/bin/env bash
+        exec node "$root/src/cli.js" "\$@"
+        EOF
+        chmod +x "$bindir/safe-outputs"
+        echo "$bindir" >> "$GITHUB_PATH"
+        # Verify it resolves and runs (node is provided by the runner / setup-node).
+        export PATH="$bindir:$PATH"
         safe-outputs --help >/dev/null 2>&1 || true
-        echo "safe-outputs installed at: $(command -v safe-outputs || echo "$globalbin/safe-outputs")"
+        echo "safe-outputs on PATH at $bindir (job-scoped; no global install)"

@@ -122,7 +122,7 @@ In a workflow, use the **setup action** to put `safe-outputs` on the runner PATH
 then reference it as an MCP server (e.g. from the `microvm-agent` harness):
 
 ```yaml
-- uses: ericsciple/safe-outputs/setup@v1     # installs the safe-outputs CLI on PATH
+- uses: ericsciple/safe-outputs/setup@v1     # puts safe-outputs on PATH (job-scoped)
 - uses: ericsciple/microvm-agent@v1
   with:
     prompt: "Triage this issue and apply the most relevant label."
@@ -132,9 +132,12 @@ then reference it as an MCP server (e.g. from the `microvm-agent` harness):
           "env": { "GITHUB_TOKEN": "${{ github.token }}" } } } }
 ```
 
-`setup@<ref>` installs the CLI **from the repo checked out at that ref** (no re-download; the
-version always matches the ref you pinned). Inside the microVM harness the server runs host-side
-and is delivered to the guest as a shim, so the token never enters the sandbox.
+`setup@<ref>` uses the repo already checked out at that ref (no re-download; version matches the
+ref). It's **job-scoped**: it drops a tiny wrapper in `RUNNER_TEMP` and adds it to `$GITHUB_PATH`
+(the runner's add-path command) — deliberately **no global `npm install -g`**, which would leak
+across jobs on self-hosted runners. Since safe-outputs is zero-dependency, no install is needed at
+all. Inside the microVM harness the server runs host-side and is delivered to the guest as a shim,
+so the token never enters the sandbox.
 
 ## Development
 
