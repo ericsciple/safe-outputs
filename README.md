@@ -11,8 +11,10 @@ repo provides those servers.
 Each safe output is an **ordinary MCP server** (stdio). One app, a subcommand per operation:
 
 ```
-safe-outputs add-labels     # MCP server exposing the add_labels tool
-safe-outputs add-comment    # MCP server exposing the add_comment tool
+safe-outputs add-labels          # MCP server exposing the add_labels tool
+safe-outputs add-comment         # MCP server exposing the add_comment tool
+safe-outputs update-issue        # MCP server exposing the update_issue tool
+safe-outputs create-pull-request # MCP server exposing the create_pull_request tool
 ```
 
 ## How it's used
@@ -58,20 +60,66 @@ host-side (see Design), so the agent never sees it.
 - **One operation per process.** Each server does exactly one thing (add labels, add a comment),
   so least privilege is structural — there is no code path to do anything else.
 
-## Environment
-
-- `GITHUB_TOKEN` — the token used to apply the write. Supplied via the server's MCP `env` block
-  (like any MCP server secret); held host-side.
-- `GITHUB_EVENT_PATH` — path to the event payload JSON (provided by Actions).
-- `GITHUB_REPOSITORY` — `owner/repo` (provided by Actions; falls back to the payload).
-- `GITHUB_API_URL` — optional, for GitHub Enterprise Server.
-
 ## Operations
 
 | Operation | Tool | Arguments | Effect |
 |---|---|---|---|
 | `add-labels` | `add_labels` | `labels: string[]` | Add labels to the triggering issue/PR |
 | `add-comment` | `add_comment` | `body: string` | Comment on the triggering issue/PR |
+| `update-issue` | `update_issue` | `title?`, `body?`, `state?` (≥1) | Edit the triggering issue's title/body/state |
+| `create-pull-request` | `create_pull_request` | `title`, `body`, `draft?` | Open a PR from the harness-prepared branch |
+
+Every tool schema exposes only the *intent*. The target — which issue/PR, which repo, and (for
+`create-pull-request`) which head/base branch — is bound host-side from the environment, never
+from an agent argument.
+
+## Scope-widening flags
+
+Safe outputs default to the narrowest scope. A workflow author can opt into a slightly wider
+scope with flags placed **after the operation id** — the harness puts them on the command line,
+so the agent never sees or controls them:
+
+```
+safe-outputs add-labels --allowed-labels bug,triage,question --max 3
+safe-outputs add-comment --max-links 10
+```
+
+| Flag | Operation | Effect |
+|---|---|---|
+| `--allowed-labels a,b,c` | `add-labels` | Reject any label not in the allow-list |
+| `--max N` | `add-labels` | Reject calls adding more than N labels |
+| `--max-links N` | `add-comment` | Reject a comment body with more than N links |
+
+## Sanitization
+
+Body and title content the agent supplies is sanitized before it becomes a durable GitHub
+artifact (see `src/sanitize.js`): control characters are stripped, CRLF is normalized, the text
+is length-capped, and `@mentions` are neutralized (wrapped in backticks) so a privileged
+host-side writer can't be used to mass-notify people or ping teams. Legitimate Markdown is left
+intact.
+
+## Environment
+
+- `GITHUB_TOKEN` — the token used to apply the write. Supplied via the server's MCP `env` block
+  (like any MCP server secret); held host-side.
+- `GITHUB_EVENT_PATH` — path to the event payload JSON (provided by Actions).
+- `GITHUB_REPOSITORY` — `owner/repo` (provided by Actions; falls back to the payload).
+- `GITHUB_HEAD_BRANCH` — for `create-pull-request`: the branch holding the agent's committed
+  changes (set by the harness).
+- `GITHUB_BASE_BRANCH` — for `create-pull-request`: the branch the PR should target.
+- `GITHUB_API_URL` — optional, for GitHub Enterprise Server.
+
+## Packaging
+
+The `bin` entry (`safe-outputs`) is declared in `package.json`, and `files` restricts what is
+published to `src/` + the README. To put the CLI on `PATH` for local/dev use:
+
+```bash
+npm install -g .   # or: npm link
+```
+
+Inside the microVM harness, how `safe-outputs` is delivered (global install vs. bundling vs. a
+pinned `npx`/`@ref`) is the harness's decision — see the `microvm-agent` action.
 
 ## Development
 

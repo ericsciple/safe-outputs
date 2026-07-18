@@ -3,10 +3,14 @@
 
 import addLabels from "./add-labels.js";
 import addComment from "./add-comment.js";
+import updateIssue from "./update-issue.js";
+import createPullRequest from "./create-pull-request.js";
 
 export const operations = {
   [addLabels.id]: addLabels,
   [addComment.id]: addComment,
+  [updateIssue.id]: updateIssue,
+  [createPullRequest.id]: createPullRequest,
 };
 
 export function getOperation(id) {

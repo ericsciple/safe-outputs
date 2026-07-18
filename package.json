@@ -6,6 +6,10 @@
   "bin": {
     "safe-outputs": "src/cli.js"
   },
+  "files": [
+    "src",
+    "README.md"
+  ],
   "exports": {
     ".": "./src/index.js"
   },

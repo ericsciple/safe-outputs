@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
  * Load the triggering context from the environment.
  * @param {Object} [env] - environment (defaults to process.env)
  * @param {Function} [readFile] - readFileSync-compatible reader (for tests)
- * @returns {{owner?: string, repo?: string, issueNumber?: number, payload: object}}
+ * @returns {{owner?: string, repo?: string, issueNumber?: number, headBranch?: string, baseBranch?: string, payload: object}}
  */
 export function loadContext(env = process.env, readFile = readFileSync) {
   let payload = {};
@@ -41,7 +41,14 @@ export function loadContext(env = process.env, readFile = readFileSync) {
     (payload.pull_request && payload.pull_request.number) ??
     undefined;
 
-  return { owner, repo, issueNumber, payload };
+  // The branch that holds the agent's committed changes (set host-side by the
+  // harness) and the branch a pull request should target. These are context, not
+  // agent input, so create-pull-request can bind them without letting the agent
+  // choose a different head/base.
+  const headBranch = env.GITHUB_HEAD_BRANCH || undefined;
+  const baseBranch = env.GITHUB_BASE_BRANCH || undefined;
+
+  return { owner, repo, issueNumber, headBranch, baseBranch, payload };
 }
 
 /**
@@ -56,6 +63,30 @@ export function requireIssueContext(ctx) {
     throw new Error(
       "This safe output acts on the triggering issue or pull request, but the event payload has no issue/PR number. " +
         "Run it on an issue or pull_request event."
+    );
+  }
+  return ctx;
+}
+
+/**
+ * Assert that we have enough context to open a pull request. The head branch is
+ * bound host-side (the branch the harness committed the agent's work to); the
+ * agent never chooses it.
+ */
+export function requirePullRequestContext(ctx) {
+  if (!ctx.owner || !ctx.repo) {
+    throw new Error("Could not determine the repository from GITHUB_REPOSITORY or the event payload.");
+  }
+  if (!ctx.headBranch) {
+    throw new Error(
+      "No source branch is bound for this pull request. The harness must set GITHUB_HEAD_BRANCH to the branch " +
+        "holding the agent's committed changes."
+    );
+  }
+  if (!ctx.baseBranch) {
+    throw new Error(
+      "No base branch is bound for this pull request. The harness must set GITHUB_BASE_BRANCH to the branch the " +
+        "pull request should target (e.g. the repository's default branch)."
     );
   }
   return ctx;

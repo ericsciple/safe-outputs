@@ -1,0 +1,195 @@
+# End-to-end test for the safe-outputs MCP servers.
+#
+# Runs each server exactly the way a harness would: as a stdio MCP server that
+# receives the token via its process env and binds its target from
+# GITHUB_EVENT_PATH. To be self-contained and repeatable, the workflow creates a
+# throwaway issue (and a throwaway branch for the PR test), exercises every
+# operation against real GitHub on the standard ubuntu-latest runner, verifies the
+# effect via the API, and cleans everything up afterwards.
+#
+# Manual only (workflow_dispatch) so it never fires on real issues.
+name: e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  issue-ops:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Unit tests
+        run: npm test
+
+      # Small helper that reads the server's JSON-RPC responses from stdin and
+      # fails the step if the tool call for a given id came back as an error.
+      - name: Write JSON-RPC assert helper
+        run: |
+          cat > "$RUNNER_TEMP/assert-ok.mjs" <<'EOF'
+          import fs from "node:fs";
+          const wantId = Number(process.argv[2]);
+          const msgs = fs.readFileSync(0, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+          const msg = msgs.find((m) => m.id === wantId);
+          if (!msg) { console.error(`no JSON-RPC response for id ${wantId}`); process.exit(1); }
+          if (msg.error) { console.error("protocol error:", JSON.stringify(msg.error)); process.exit(1); }
+          if (!msg.result || msg.result.isError) { console.error("tool error:", JSON.stringify(msg.result)); process.exit(1); }
+          console.log("OK:", msg.result.content?.[0]?.text ?? JSON.stringify(msg.result));
+          EOF
+
+      - name: Create throwaway issue + ensure label exists
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create e2e-safe-outputs --color ededed --description "safe-outputs e2e" --force
+          url=$(gh issue create \
+            --title "safe-outputs e2e $(date -u +%FT%TZ)" \
+            --body "Automated end-to-end test. Safe to close.")
+          num=${url##*/}
+          echo "number=$num" >> "$GITHUB_OUTPUT"
+          echo "Created issue #$num ($url)"
+          # Bind every server to this issue via a synthetic event payload.
+          echo "{\"issue\":{\"number\":$num}}" > "$RUNNER_TEMP/event.json"
+
+      - name: add_labels
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add_labels","arguments":{"labels":["e2e-safe-outputs"]}}}' \
+            | node src/cli.js add-labels | tee /dev/stderr | node "$RUNNER_TEMP/assert-ok.mjs" 2
+
+      - name: add_comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add_comment","arguments":{"body":"e2e comment — mention @octocat should be neutralized."}}}' \
+            | node src/cli.js add-comment | tee /dev/stderr | node "$RUNNER_TEMP/assert-ok.mjs" 2
+
+      - name: update_issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/event.json
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"update_issue","arguments":{"title":"safe-outputs e2e (updated)","body":"Updated by the e2e run."}}}' \
+            | node src/cli.js update-issue | tee /dev/stderr | node "$RUNNER_TEMP/assert-ok.mjs" 2
+
+      - name: Verify the writes landed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          num=${{ steps.issue.outputs.number }}
+          echo "== issue #$num state =="
+          gh issue view "$num" --json title,labels,comments \
+            --jq '{title, labels: [.labels[].name], comments: (.comments | length)}'
+          gh issue view "$num" --json labels --jq '.labels[].name' | grep -qx e2e-safe-outputs
+          gh issue view "$num" --json title --jq .title | grep -qx "safe-outputs e2e (updated)"
+          # add_comment neutralizes @mentions by wrapping them in backticks.
+          gh issue view "$num" --json comments --jq '.comments[-1].body' | grep -qF '`@octocat`'
+          echo "All issue-op effects verified."
+
+      - name: Cleanup — close the throwaway issue
+        if: always() && steps.issue.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue close "${{ steps.issue.outputs.number }}" --reason completed || true
+
+  pr-ops:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Write JSON-RPC assert helper
+        run: |
+          cat > "$RUNNER_TEMP/assert-ok.mjs" <<'EOF'
+          import fs from "node:fs";
+          const wantId = Number(process.argv[2]);
+          const msgs = fs.readFileSync(0, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+          const msg = msgs.find((m) => m.id === wantId);
+          if (!msg) { console.error(`no JSON-RPC response for id ${wantId}`); process.exit(1); }
+          if (msg.error) { console.error("protocol error:", JSON.stringify(msg.error)); process.exit(1); }
+          if (!msg.result || msg.result.isError) { console.error("tool error:", JSON.stringify(msg.result)); process.exit(1); }
+          console.log("OK:", msg.result.content?.[0]?.text ?? JSON.stringify(msg.result));
+          EOF
+
+      - name: Push a throwaway branch with a trivial change
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=${GITHUB_REF_NAME}
+          head="e2e/pr-$(date -u +%Y%m%d%H%M%S)-$RANDOM"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$head"
+          echo "e2e run $(date -u +%FT%TZ)" > .e2e-pr-probe.txt
+          git add .e2e-pr-probe.txt
+          git commit -m "e2e: throwaway change"
+          git push origin "$head"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: create_pull_request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Branches are bound host-side (context), never chosen by the agent.
+          GITHUB_HEAD_BRANCH: ${{ steps.branch.outputs.head }}
+          GITHUB_BASE_BRANCH: ${{ steps.branch.outputs.base }}
+          # create-pull-request uses PR context, not an issue payload.
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/empty-event.json
+        run: |
+          echo '{}' > "$RUNNER_TEMP/empty-event.json"
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_pull_request","arguments":{"title":"safe-outputs e2e PR","body":"Automated e2e PR. Safe to close.","draft":true}}}' \
+            | node src/cli.js create-pull-request | tee /dev/stderr | node "$RUNNER_TEMP/assert-ok.mjs" 2
+
+      - name: Verify the PR is open with the bound branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="${{ steps.branch.outputs.head }}"
+          gh pr list --head "$head" --state open --json number,baseRefName,isDraft \
+            --jq '.[0] | {number, baseRefName, isDraft}'
+          test "$(gh pr list --head "$head" --state open --json number --jq 'length')" = "1"
+          gh pr list --head "$head" --state open --json baseRefName --jq '.[0].baseRefName' \
+            | grep -qx "${{ steps.branch.outputs.base }}"
+          echo "PR verified (open, base bound, from the harness-set head branch)."
+
+      - name: Cleanup — close PR and delete the throwaway branch
+        if: always() && steps.branch.outputs.head != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="${{ steps.branch.outputs.head }}"
+          num=$(gh pr list --head "$head" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh pr close "$num" --delete-branch || true
+          else
+            git push origin --delete "$head" || true
+          fi

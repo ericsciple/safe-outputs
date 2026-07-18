@@ -59,3 +59,15 @@ test("enum is enforced", () => {
   assert.deepEqual(validate(schema, "a"), []);
   assert.ok(validate(schema, "c").some((e) => /must be one of/.test(e)));
 });
+
+test("minProperties is enforced", () => {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    minProperties: 1,
+    properties: { title: { type: "string" }, body: { type: "string" } },
+  };
+  assert.deepEqual(validate(schema, { title: "x" }), []);
+  const errors = validate(schema, {});
+  assert.ok(errors.some((e) => /at least 1 property/.test(e)));
+});

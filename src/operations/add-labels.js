@@ -29,9 +29,37 @@ export default {
    * @param {{labels: string[]}} args - validated arguments
    * @param {{owner: string, repo: string, issueNumber: number}} ctx - bound context
    * @param {{request: Function}} github - GitHub client
+   * @param {{allowedLabels?: string, max?: string}} [config] - scope-widening flags
    * @returns {Promise<string>} human-readable summary
    */
-  async apply(args, ctx, github) {
+  async apply(args, ctx, github, config = {}) {
+    // Optional allow-list: when the workflow author restricts which labels this
+    // safe output may apply, reject anything outside it (as an actionable tool
+    // error the model can correct).
+    if (config.allowedLabels !== undefined) {
+      const allowed = String(config.allowedLabels)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const disallowed = args.labels.filter((l) => !allowed.includes(l));
+      if (disallowed.length) {
+        throw new Error(
+          `These labels are not permitted by this workflow: ${disallowed.map((l) => `'${l}'`).join(", ")}. ` +
+            `Allowed labels: ${allowed.map((l) => `'${l}'`).join(", ")}.`
+        );
+      }
+    }
+
+    // Optional cap on how many labels a single call may add.
+    if (config.max !== undefined) {
+      const max = Number.parseInt(config.max, 10);
+      if (Number.isFinite(max) && args.labels.length > max) {
+        throw new Error(
+          `Too many labels: ${args.labels.length} requested but this workflow allows at most ${max} per call.`
+        );
+      }
+    }
+
     await github.request(
       "POST",
       `/repos/${ctx.owner}/${ctx.repo}/issues/${ctx.issueNumber}/labels`,

@@ -3,8 +3,9 @@
 // Supports only the subset of JSON Schema the safe-output tools actually use:
 // object/array/string/number/integer/boolean/null types, `required`,
 // `properties`, `additionalProperties: false`, `items`, `enum`, `minItems`,
-// and `minLength`. This is deliberately dependency-free (no ajv) because the
-// schemas are simple and the whole app ships with zero runtime dependencies.
+// `minProperties`, and `minLength`. This is deliberately dependency-free (no ajv)
+// because the schemas are simple and the whole app ships with zero runtime
+// dependencies.
 //
 // Returns an array of human-readable error strings (empty === valid), suitable
 // for handing back to the model so it can self-correct and retry.
@@ -32,6 +33,9 @@ function check(schema, value, path, errors) {
 
   if (isObject(value)) {
     const properties = schema.properties || {};
+    if (typeof schema.minProperties === "number" && Object.keys(value).length < schema.minProperties) {
+      errors.push(`${path}: must have at least ${schema.minProperties} propert${schema.minProperties === 1 ? "y" : "ies"}`);
+    }
     for (const req of schema.required || []) {
       if (value[req] === undefined) errors.push(`${path}.${req}: is required`);
     }

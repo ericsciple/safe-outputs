@@ -15,6 +15,7 @@ import { createMcpServer } from "./mcp.js";
 import { serve } from "./serve.js";
 import { loadContext, requireIssueContext } from "./context.js";
 import { createGitHubClient } from "./github.js";
+import { parseConfig } from "./config.js";
 
 function usage(stream) {
   stream.write(
@@ -43,13 +44,26 @@ function main(argv = process.argv) {
     process.exit(1);
   }
 
+  // Scope-widening flags (e.g. --allowed-labels, --max) come after the operation
+  // id. The harness places them on the command line; the agent never sees them.
+  let config;
+  try {
+    config = parseConfig(argv.slice(3));
+  } catch (e) {
+    process.stderr.write(`${e.message}\n\n`);
+    usage(process.stderr);
+    process.exit(1);
+  }
+
   // Bind context + GitHub client lazily, at call time, so the server can start
   // (and advertise its schema) even before an event/token is needed, and so a
   // missing-context error surfaces as an actionable tool error to the model.
+  // Each operation picks how much context it requires (an issue vs. a PR branch).
+  const requireContext = operation.requireContext || requireIssueContext;
   async function apply(args) {
-    const ctx = requireIssueContext(loadContext());
+    const ctx = requireContext(loadContext());
     const github = createGitHubClient();
-    return operation.apply(args, ctx, github);
+    return operation.apply(args, ctx, github, config);
   }
 
   const server = createMcpServer({

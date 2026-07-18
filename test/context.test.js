@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadContext, requireIssueContext } from "../src/context.js";
+import { loadContext, requireIssueContext, requirePullRequestContext } from "../src/context.js";
 
 function fakeReader(map) {
   return (path) => {
@@ -54,4 +54,34 @@ test("malformed event payload throws an actionable error", () => {
   const env = { GITHUB_EVENT_PATH: "/event.json" };
   const read = fakeReader({ "/event.json": "{ not json" });
   assert.throws(() => loadContext(env, read), /Failed to read event payload/);
+});
+
+test("binds head/base branches from the environment", () => {
+  const env = {
+    GITHUB_REPOSITORY: "octo/repo",
+    GITHUB_HEAD_BRANCH: "agent/work",
+    GITHUB_BASE_BRANCH: "main",
+  };
+  const ctx = loadContext(env, () => "{}");
+  assert.equal(ctx.headBranch, "agent/work");
+  assert.equal(ctx.baseBranch, "main");
+});
+
+test("requirePullRequestContext throws without a head branch", () => {
+  assert.throws(
+    () => requirePullRequestContext({ owner: "o", repo: "r", baseBranch: "main" }),
+    /source branch/
+  );
+});
+
+test("requirePullRequestContext throws without a base branch", () => {
+  assert.throws(
+    () => requirePullRequestContext({ owner: "o", repo: "r", headBranch: "agent/work" }),
+    /base branch/
+  );
+});
+
+test("requirePullRequestContext passes when owner/repo/head/base are present", () => {
+  const ctx = { owner: "o", repo: "r", headBranch: "agent/work", baseBranch: "main" };
+  assert.equal(requirePullRequestContext(ctx), ctx);
 });
