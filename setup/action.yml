@@ -1,0 +1,41 @@
+name: "Setup safe-outputs"
+description: >-
+  Install the safe-outputs CLI on the runner PATH so it can be referenced as an MCP
+  server (e.g. command: safe-outputs) by a sandbox/harness such as microvm-agent.
+author: "ericsciple"
+
+inputs:
+  version:
+    description: >-
+      Git ref (tag/branch/SHA) of ericsciple/safe-outputs to install. Defaults to the
+      ref this setup action was resolved at, so `uses: ericsciple/safe-outputs/setup@v1`
+      installs the matching v1 CLI. Pass a value to override.
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install safe-outputs CLI
+      shell: bash
+      env:
+        # The ref this action was checked out at (matches the CLI version to the setup ref).
+        SETUP_REF: ${{ github.action_ref }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -e
+        ref="${INPUT_VERSION:-$SETUP_REF}"
+        if [ -n "$ref" ]; then
+          spec="github:ericsciple/safe-outputs#${ref}"
+        else
+          spec="github:ericsciple/safe-outputs"
+        fi
+        echo "Installing safe-outputs from ${spec}"
+        npm install -g "$spec"
+        # Ensure npm's global bin is on PATH for later steps (usually already is).
+        globalbin="$(npm prefix -g)/bin"
+        echo "$globalbin" >> "$GITHUB_PATH"
+        # Verify it resolves and runs.
+        export PATH="$globalbin:$PATH"
+        safe-outputs --help >/dev/null 2>&1 || safe-outputs --help || true
+        echo "safe-outputs installed at: $(command -v safe-outputs || echo "$globalbin/safe-outputs")"

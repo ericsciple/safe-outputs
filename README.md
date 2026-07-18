@@ -118,8 +118,23 @@ published to `src/` + the README. To put the CLI on `PATH` for local/dev use:
 npm install -g .   # or: npm link
 ```
 
-Inside the microVM harness, how `safe-outputs` is delivered (global install vs. bundling vs. a
-pinned `npx`/`@ref`) is the harness's decision — see the `microvm-agent` action.
+In a workflow, use the **setup action** to put `safe-outputs` on the runner PATH the Actions way,
+then reference it as an MCP server (e.g. from the `microvm-agent` harness):
+
+```yaml
+- uses: ericsciple/safe-outputs/setup@v1     # installs the safe-outputs CLI on PATH
+- uses: ericsciple/microvm-agent@v1
+  with:
+    prompt: "Triage this issue and apply the most relevant label."
+    mcp-config: |
+      { "mcpServers": { "labeler": {
+          "command": "safe-outputs", "args": ["add-labels"],
+          "env": { "GITHUB_TOKEN": "${{ github.token }}" } } } }
+```
+
+`setup@<ref>` installs the matching CLI version; pass `with: { version: <ref> }` to override.
+Inside the microVM harness the server runs host-side and is delivered to the guest as a shim, so
+the token never enters the sandbox.
 
 ## Development
 
