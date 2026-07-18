@@ -132,9 +132,9 @@ then reference it as an MCP server (e.g. from the `microvm-agent` harness):
           "env": { "GITHUB_TOKEN": "${{ github.token }}" } } } }
 ```
 
-`setup@<ref>` installs the matching CLI version; pass `with: { version: <ref> }` to override.
-Inside the microVM harness the server runs host-side and is delivered to the guest as a shim, so
-the token never enters the sandbox.
+`setup@<ref>` installs the CLI **from the repo checked out at that ref** (no re-download; the
+version always matches the ref you pinned). Inside the microVM harness the server runs host-side
+and is delivered to the guest as a shim, so the token never enters the sandbox.
 
 ## Development
 
