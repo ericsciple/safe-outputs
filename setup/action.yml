@@ -4,29 +4,11 @@ description: >-
   an MCP server (e.g. command: safe-outputs) by a sandbox/harness such as microvm-agent.
 author: "ericsciple"
 
+# A Node.js action (not composite) on purpose: it gives us process.execPath — the
+# runner's own Node from externals — which we bake into the CLI wrapper. That way the
+# wrapper never assumes `node` is on PATH (a workflow without setup-node has no `node`
+# on PATH), and we avoid a global `npm install -g` that would leak across jobs on
+# self-hosted runners.
 runs:
-  using: "composite"
-  steps:
-    - name: Put safe-outputs on PATH (job-scoped)
-      shell: bash
-      run: |
-        set -e
-        # The whole repo is checked out at the `@ref` used in `uses:`, and
-        # GITHUB_ACTION_PATH points at this setup/ dir — so the CLI is its parent.
-        # safe-outputs is zero-dependency, so no install is needed: drop a tiny
-        # wrapper in a job-scoped bin dir and add it to PATH via the runner's
-        # add-path command. This avoids a GLOBAL npm install, which would leak
-        # across jobs on self-hosted runners.
-        root="$(cd "$GITHUB_ACTION_PATH/.." && pwd)"
-        bindir="${RUNNER_TEMP:-/tmp}/safe-outputs-bin"
-        mkdir -p "$bindir"
-        cat > "$bindir/safe-outputs" <<EOF
-        #!/usr/bin/env bash
-        exec node "$root/src/cli.js" "\$@"
-        EOF
-        chmod +x "$bindir/safe-outputs"
-        echo "$bindir" >> "$GITHUB_PATH"
-        # Verify it resolves and runs (node is provided by the runner / setup-node).
-        export PATH="$bindir:$PATH"
-        safe-outputs --help >/dev/null 2>&1 || true
-        echo "safe-outputs on PATH at $bindir (job-scoped; no global install)"
+  using: "node20"
+  main: "index.js"

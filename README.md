@@ -133,11 +133,12 @@ then reference it as an MCP server (e.g. from the `microvm-agent` harness):
 ```
 
 `setup@<ref>` uses the repo already checked out at that ref (no re-download; version matches the
-ref). It's **job-scoped**: it drops a tiny wrapper in `RUNNER_TEMP` and adds it to `$GITHUB_PATH`
-(the runner's add-path command) — deliberately **no global `npm install -g`**, which would leak
-across jobs on self-hosted runners. Since safe-outputs is zero-dependency, no install is needed at
-all. Inside the microVM harness the server runs host-side and is delivered to the guest as a shim,
-so the token never enters the sandbox.
+ref). It's a **Node.js action**, so it uses the runner's own Node (`process.execPath`, from
+externals) — it bakes that absolute path into a tiny wrapper and puts the wrapper on `$GITHUB_PATH`
+(job-scoped). So it needs **no `setup-node`** (the CLI runs under the runner's guaranteed Node) and
+does **no global `npm install -g`** (which would leak across jobs on self-hosted runners). Since
+safe-outputs is zero-dependency, nothing is installed at all. Inside the microVM harness the server
+runs host-side and is delivered to the guest as a shim, so the token never enters the sandbox.
 
 ## Development
 
