@@ -62,6 +62,32 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
   `add-reviewer`), `hide-comment`, `comment-memory`, `create-check-run`, `create-agent-session`,
   `update-discussion`, `close-discussion`.
 
+### 2.1 Build order + per-op decisions
+
+**Sequencing (confirmed 2026-07-20): do §3.1 + §4.1 first, then §2.** §3.1 (flag parsing for
+`target`/`target-repo`/`allowed`/`blocked`/`max`, the `MCP_STATE_DIR` op-counter, footer) and §4.1 (the
+reject/transform sanitize pipeline) are **cross-cutting infrastructure**, not per-op work. Build them
+**once against the existing 4 ops** as the test bed; then each new §2 op is "declare a schema + bind
+context + call the shared helpers." §3.1 and §4.1 are largely independent (can be parallel); footer
+(§3.1(6)) pairs with §4.1 since both touch bodies.
+
+**After the infra, most of §2 is mechanical** — `remove-labels` and `close-issue` are object-acting
+mirrors of add-labels/update-issue; `create-issue` is a creation op in the current repo. But three items
+carry **real decisions** (resolve before building them):
+
+1. **`missing-tool` / `missing-data` / `report-incomplete` — no clean sink in our inline model.** gh-aw
+   *collects* these in its async processor and optionally opens an issue; we have **no collection
+   phase**. **DECISION NEEDED:** where does the report go — the **step summary/log**, a **created
+   issue**, or an **action output**? (Leaning: step summary + optional `--create-issue`, mirroring
+   gh-aw's default.)
+2. **`create-discussion` needs GraphQL.** GitHub Discussions are **GraphQL-only** — not in the REST API
+   `src/github.js` speaks. Adding it means teaching the client GraphQL (implementation cost), so it's not
+   a plug-in like the REST ops.
+3. **Creation vs. object-acting `target`.** The §3.1 `target` model is written for ops that *act on* the
+   triggering object. **Creation ops** (`create-issue`, `create-discussion`, `create-pull-request`) have
+   no triggering-object target — they take **`target-repo` only** (where to create), not `target`. Fold
+   this distinction into the §3.1 target work.
+
 ---
 
 ## 3. Per-operation configuration richness — gaps
