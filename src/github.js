@@ -51,5 +51,35 @@ export function createGitHubClient({ token, apiUrl, fetchImpl } = {}) {
     return data;
   }
 
-  return { request };
+  // GraphQL v4 (Discussions and other GraphQL-only surfaces). Same fetch/auth as REST;
+  // GraphQL returns HTTP 200 even on errors, so we check the `errors` array.
+  async function graphql(query, variables = {}) {
+    const url = process.env.GITHUB_GRAPHQL_URL || `${base.replace(/\/$/, "")}/graphql`;
+    const res = await doFetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "safe-outputs",
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = {};
+    }
+    if (!res.ok) {
+      throw new Error(`GitHub GraphQL failed: ${res.status} ${res.statusText}`);
+    }
+    if (data.errors && data.errors.length) {
+      throw new Error(`GitHub GraphQL error: ${data.errors.map((e) => e.message).join("; ")}`);
+    }
+    return data.data;
+  }
+
+  return { request, graphql };
 }

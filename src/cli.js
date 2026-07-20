@@ -97,6 +97,12 @@ function resolveContext(operation, raw, config, args) {
     const { owner, repo } = resolveRepo(ctx, config);
     return { ...ctx, owner, repo };
   }
+  if (operation.targetKind === "create") {
+    // Creation ops (create-issue, create-discussion) need a repo but no triggering
+    // object. Default = the current repo; --target-repo widens it (allow-listed).
+    const { owner, repo } = resolveRepo(raw, config);
+    return { ...raw, owner, repo };
+  }
   // Object-acting ("issue") ops: resolve repo + issue/PR number.
   const { owner, repo } = resolveRepo(raw, config);
   const issueNumber = resolveIssueNumber(raw, config, args);

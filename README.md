@@ -65,8 +65,12 @@ host-side (see Design), so the agent never sees it.
 | Operation | Tool | Arguments | Effect |
 |---|---|---|---|
 | `add-labels` | `add_labels` | `labels: string[]` | Add labels to the triggering issue/PR |
+| `remove-labels` | `remove_labels` | `labels: string[]` | Remove labels from the triggering issue/PR |
 | `add-comment` | `add_comment` | `body: string` | Comment on the triggering issue/PR |
 | `update-issue` | `update_issue` | `title?`, `body?`, `state?` (≥1) | Edit the triggering issue's title/body/state |
+| `close-issue` | `close_issue` | `body?`, `state_reason?` | Close the triggering issue (optional closing comment) |
+| `create-issue` | `create_issue` | `title`, `body`, `labels?` | Create a new issue in the repo |
+| `create-discussion` | `create_discussion` | `title`, `body`, `category?` | Create a GitHub Discussion (GraphQL) |
 | `create-pull-request` | `create_pull_request` | `title`, `body`, `draft?` | Open a PR from the harness-prepared branch |
 
 Every tool schema exposes only the *intent*. The target — which issue/PR, which repo, and (for
