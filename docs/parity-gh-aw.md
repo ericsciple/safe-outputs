@@ -201,21 +201,42 @@ content sanitization still matters. What each side does:
 - **Configurable @mention allowlists** (collaborators / teams / event context). We neutralize *all*
   mentions (simpler; arguably a safer default, but less flexible).
 
-### 4.1 When sanitization runs — and why our model can *reject* instead of transform
+### 4.1 When sanitization runs — reject (inline) vs. transform (LOCKED 2026-07-20)
 
 - **gh-aw runs it at BOTH ends:** synchronously at the MCP gateway (tool-call time → the model gets
   immediate feedback) **and** in the async processor job (defense-in-depth, after the agent process is
   gone). Because the processor runs when the **agent no longer exists**, it can't ask the agent to fix
   anything, so there it **transforms** (redacts URLs, neutralizes mentions) rather than rejecting.
 - **We run fully inline and synchronous:** the agent's `tools/call` blocks on our host-side response,
-  so we **can return an actionable error and the agent self-corrects on its next turn**. That's an
-  advantage of the inline model. Direction:
-  - **Reject** (return `isError` with a fix hint) for policy violations the agent *should* fix:
-    disallowed URL domain, too many links/mentions, oversized body, disallowed label.
-  - **Transform silently** only for harmless normalizations where a reject would be pointless noise:
-    control-char strip, CRLF→LF, Unicode NFC / zero-width removal, `<script>`/HTML stripping.
-  - **@mentions** are the judgment call: reject ("remove or code-quote the @mention") is cleaner and
-    more transparent than silently backtick-wrapping, but chattier. Undecided — lean reject.
+  so we **can return an actionable error and the agent self-corrects on its next turn**. Locked split:
+
+**A. Reject** (return `isError` + a one-line fix hint; the agent corrects and retries) — author-policy
+violations the agent *should* fix:
+- **Body over the max length** → reject with the limit ("shorten to under N characters"). **No silent
+  truncation** (our inline model lets the agent trim meaningfully; drops gh-aw's truncation marker).
+- **URL domain not in `--allowed-domains`** — opt-in feature; when unset we don't domain-filter.
+- **More links than `--max-links`** — opt-in cap.
+- **Label not in `--allowed`, or matching `--blocked`** (the renamed label allowlist, §3.1(4)).
+- **Op-count over `--max`** — see §3.1(1).
+
+**B. Transform silently** (mechanical, safe, where a reject would be pointless noise):
+- Strip C0 control chars + DEL; normalize CRLF→LF.
+- **Unicode NFC + zero-width char removal** (U+200B/200C/200D/FEFF) — anti-spoofing.
+- **HTML filtering** — strip `<script>`, `<iframe>`, `<object>`, `<embed>` and `on*` handler attributes;
+  keep safe GFM tags (`<details>`, `<summary>`, `<sub>`, `<sup>`, `<kbd>`).
+- **Remove XML comments** (`<!-- -->`); **balance** unterminated code fences.
+- **Neutralize non-`http(s)`/`mailto` link protocols** (defense-in-depth; GitHub also strips these on
+  render).
+- **Escape line-start slash-commands** (`^/cmd` → `\/cmd`) and **defang closing keywords** (`fixes #123`
+  → backticked) so a privileged write can't trigger bot actions / auto-close issues.
+
+**C. @mentions → transform (backtick-wrap ALL), NOT reject** — resolving the earlier "undecided". Since
+we neutralize *every* mention (keeps the text visible, no notification), no ping is possible, so a
+per-message cap or a reject is unnecessary and would only add friction; the backtick rendering also
+visibly signals the neutralization. (This is the one place we **refine** the doc's earlier "lean reject":
+transform-all is safe *and* lower-friction than rejecting on every `@name`.)
+
+Applies to body/title text fields on the body-bearing ops.
 
 ---
 
@@ -229,8 +250,8 @@ content sanitization still matters. What each side does:
   context. No **run-wide op-count** cap, no cross-repo allowlist, single enforcement point (adequate
   given our isolation model).
 - **Op-count wrinkle:** our server is invoked as a fresh `safe-outputs <op>` process **per call**
-  (stateless), so a run-wide op-count needs **external state** — a per-instance counter file keyed by
-  the MCP server's `--id`. Full mechanism in **§3.1(1)**.
+  (stateless), so a run-wide op-count needs **external state** — a per-instance counter dir provided via
+  the `MCP_STATE_DIR` env var. Full mechanism in **§3.1(1)**.
 
 ---
 
@@ -238,8 +259,9 @@ content sanitization still matters. What each side does:
 
 **P0 — cheap, high value**
 - Add `create-issue` (most-used) and `missing-tool` (agent signals a missing capability).
-- Sanitization hardening that matters even in our model: **zero-width/Unicode NFC**, **HTML/script
-  tag stripping**, **truncation marker**; move to **reject-inline** for policy violations (§4.1).
+- Sanitization hardening (transforms): **zero-width/Unicode NFC**, **HTML/script stripping**, XML-comment
+  removal + code-fence balancing; and move policy checks to **reject-inline** per the locked §4.1 split
+  (reject oversize/bad-domain/over-limit/disallowed-label; no silent truncation).
 
 **P1**
 - `remove-labels`, `close-issue`, `create-discussion`.
@@ -266,9 +288,11 @@ content sanitization still matters. What each side does:
 - **Safe default is sacred:** every op stays bound to the **object in the event payload** by default;
   the target is never in the agent-visible schema. Scope-widening (`target`, `target-repo`,
   `allowed-repos`) is added only as **author-supplied flags** (like `--allowed-labels`/`--max` today).
-- **Prefer reject over transform** for policy violations — our inline/synchronous model lets the agent
-  self-correct, which gh-aw's async processor can't. Keep silent transforms only for harmless
-  normalizations (§4.1).
+- **Reject vs. transform is LOCKED (§4.1):** reject (inline, agent self-corrects) for author-policy
+  violations — oversize body (no silent truncation), disallowed URL domain, over `--max-links`,
+  disallowed label, over `--max`; transform silently for mechanical normalizations (control chars,
+  NFC/zero-width, HTML/script strip, XML comments, code-fence balance, protocol/slash-command/closing-
+  keyword defang); **@mentions stay a backtick transform** (neutralize all → no ping → no reject/cap).
 - **Per-handler tokens are done; App-minting is a composition concern**, not a safe-outputs feature.
 - **Op-count** limits are worthwhile but need an external counter (§5) because we run stateless per call.
 
