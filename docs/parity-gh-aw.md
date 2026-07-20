@@ -98,32 +98,37 @@ stronger-isolation model calls for a safer default. Nothing implemented yet — 
    - **Tracking mechanism (our stateless-per-call model).** gh-aw uses an in-memory counter in a
      **long-lived** MCP server; we spawn a **fresh `safe-outputs <op>` process per call**, so we need
      external, run-scoped, per-instance state. Design:
-     - **Location via an env var, not a flag.** The harness sets **`SAFE_OUTPUTS_STATE_DIR`** on each
-       server's `env` block (where it already puts the token), pointing at a directory unique per
-       (agent step, server instance). safe-outputs treats the value as **opaque**. (An `--id` flag was
-       rejected — an MCP server shouldn't need to know its own config-key name; identity is encoded in
-       the path instead.)
-     - **Path layout:** `${RUNNER_TEMP}/safe-outputs/${STEP_GUID}/${instance}` where
+     - **Location via an env var, not a flag.** The harness gives **every** MCP server a private,
+       per-(step, instance) scratch dir via a **generic** env var **`MCP_STATE_DIR`** (set on each
+       server's `env` block, where the token already goes). This is a general primitive — not
+       safe-outputs special-casing; other servers just ignore it. safe-outputs consumes it (documented
+       convention) and treats the value as **opaque**. (An `--id` flag was rejected — a server shouldn't
+       need to know its own config-key name; identity is encoded in the path.)
+     - **Path layout:** `${RUNNER_TEMP}/mcp-state/${STEP_GUID}/${instance}` where
        - **`STEP_GUID`** is generated **once per agent-step invocation** by the harness → two agent
          steps in one job get different GUIDs → **independent limits** (RUNNER_TEMP is per-*job*, so a
          per-step GUID is required to separate steps).
-       - **`instance`** identifies the mcp-config entry, so `add_labels1` / `add_labels2` count
-         separately.
-     - **ID sanitization (path safety).** mcp-config keys are author-controlled and may contain `/`,
-       `..`, etc. The **harness** (which builds the path) sanitizes: allow `[A-Za-z0-9._-]`, replace the
-       rest, and append a short hash of the raw key → `${sanitized}-${hash8}` (also handles collisions).
-       safe-outputs never constructs the path (only consumes the env var), so traversal can't originate
-       from a key.
+       - **`instance`** is the mcp-config server name, used **verbatim** (see name validation below), so
+         `add_labels1` / `add_labels2` count separately.
+     - **Name validation — reject, don't sanitize.** The server name is **already** used verbatim as the
+       `/__mcp/<name>` shim filename and referenced by the author in the prompt, so it must be safe
+       regardless. The harness **validates each mcp-config key** at parse time against a safe charset
+       (`[A-Za-z0-9._-]`, length-capped) and **rejects** invalid names with a clear error — no
+       mangling, so the name the author configures is exactly what they reference. (This also fixes a
+       latent bug: a name with `/` currently breaks shim generation with no clear error.) The verbatim
+       name is then a safe path segment.
      - **Counter file + concurrency (lock-free, no TOCTOU).** Keep a `calls` file in the state dir. Per
        call, **after** schema-validation + sanitization pass and **immediately before** the GitHub
        write: **append one claim line (atomic small POSIX write), then read the file and take my line's
        ordinal; if ordinal > max, reject** ("max of N reached"); else perform the write. Atomic ordered
        appends give each concurrent caller a **distinct ordinal**, so at most `max` writes ever proceed.
-       (Trade-off: a claimed line whose write then fails still consumes its slot — acceptable; a
-       *validation*-rejected call appends nothing, so bad input never burns budget.)
-     - **Cleanup.** The harness removes `${RUNNER_TEMP}/safe-outputs/${STEP_GUID}` in its **teardown**
+       A claimed line whose write then fails still consumes its slot — **this matches gh-aw** (it does
+       `processedCount++` before the write, no refund on failure); a *validation*-rejected call appends
+       nothing, so bad input never burns budget (also matches gh-aw, which rejects schema-invalid calls
+       earlier).
+     - **Cleanup.** The harness removes `${RUNNER_TEMP}/mcp-state/${STEP_GUID}` in its **teardown**
        (end of the agent step); the runner wiping `RUNNER_TEMP` between jobs is the backstop.
-     - **Fallbacks.** No `--max` → no file, no cap. `--max` set but `SAFE_OUTPUTS_STATE_DIR` absent
+     - **Fallbacks.** No `--max` → no file, no cap. `--max` set but `MCP_STATE_DIR` absent
        (safe-outputs run outside our harness) → best-effort: default to a dir under `RUNNER_TEMP`/tmp and
        log that per-step/per-instance isolation isn't guaranteed.
 
@@ -164,12 +169,12 @@ stronger-isolation model calls for a safer default. Nothing implemented yet — 
      `issue-created`, `commit-pushed`, agent-failure messages, staged-mode title/description) + a
      `disclosure-header`. **We run inline and post no activation comments**, so that layer doesn't apply.
      The only piece that maps to us is the **footer on the safe-output body**.
-   - **Proposed shape for us:** `--footer` boolean (lean **default-on** — attribution/disclosure is good
-     practice for AI-generated GitHub content) + optional `--footer-text "<template>"` with a small
-     placeholder set (`{workflow}`, `{run_url}`, `{repo}`, `{number}`) resolved host-side from
-     `GITHUB_WORKFLOW` / `GITHUB_SERVER_URL`+`GITHUB_REPOSITORY`+`GITHUB_RUN_ID` / event payload. Applies
-     to body-bearing ops (add-comment, create-issue, update-issue, create-pull-request), not label-only
-     ops. Default on/off is a product call — **OPEN**.
+   - **Proposed shape for us:** `--footer` boolean, **default ON** (decided — attribution/disclosure is
+     good practice for AI-generated GitHub content, and it's good advertising) + optional
+     `--footer-text "<template>"` with a small placeholder set (`{workflow}`, `{run_url}`, `{repo}`,
+     `{number}`) resolved host-side from `GITHUB_WORKFLOW` /
+     `GITHUB_SERVER_URL`+`GITHUB_REPOSITORY`+`GITHUB_RUN_ID` / event payload. Applies to body-bearing ops
+     (add-comment, create-issue, update-issue, create-pull-request), not label-only ops.
 
 ## 4. Content sanitization — real gaps (the output is durable regardless of the sandbox)
 
