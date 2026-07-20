@@ -238,6 +238,21 @@ transform-all is safe *and* lower-friction than rejecting on every `@name`.)
 
 Applies to body/title text fields on the body-bearing ops.
 
+**Scope (important):** sanitization runs **only on human-facing text fields** — `title`, `body`,
+comment body. It **never touches file contents or the code diff.** For `create-pull-request` the tool
+carries only `title` + `body`; the code lives as **git commits on a branch bound host-side**
+(`ctx.headBranch`), so it is never a tool argument and can't be sanitized. So an agent writing "odd
+shapes" into source code for testing is unaffected — that goes through git, not the sanitizer.
+**gh-aw draws the same boundary:** it sanitizes the same text fields and applies *separate,
+non-content* controls to the diff (`max-patch-size`, `max-patch-files`, workflow-file gating), never
+the text pipeline. We're consistent.
+
+**Code regions inside a body are preserved:** the character-altering transforms (@mention backtick,
+slash-command escape, closing-keyword defang, HTML strip) are **code-region-aware** — they apply to
+prose but skip fenced/inline code, so a legitimate code snippet inside a PR/issue body isn't mangled
+(matches gh-aw's "preserve code blocks verbatim"). Control-char strip / NFC / zero-width removal are
+safe everywhere and apply throughout.
+
 ---
 
 ## 5. Validation
