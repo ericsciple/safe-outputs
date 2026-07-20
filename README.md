@@ -90,14 +90,21 @@ safe-outputs add-comment --max-links 10 --no-footer
 
 | Flag | Operation | Effect |
 |---|---|---|
-| `--allowed a,b,c` | `add-labels` | Reject any label not in the allow-list (glob patterns OK) |
-| `--blocked a,*[bot]` | `add-labels` | Reject any label matching the block-list (glob patterns OK) |
-| `--max N` | all | Cap at N **calls per run** (also caps labels per call for `add-labels`). `-1` = unlimited |
+| `--allowed a,b,c` | `add-labels`, `remove-labels` | Reject any label not in the allow-list (glob patterns OK) |
+| `--blocked a,*[bot]` | `add-labels`, `remove-labels` | Reject any label matching the block-list (glob patterns OK) |
+| `--max N` | all | Cap at N **calls per run** (also caps labels per call for label ops). `-1` = unlimited |
 | `--max-links N` | `add-comment` | Reject a comment body with more than N links |
+| `--allowed-domains a.com,b.com` | body ops | **Opt-in**: reject body text that links to a domain not in the list |
 | `--target triggering\|*\|<n>` | issue ops | Which object to act on. Default `triggering`; `*` lets the agent pass `item_number`; `<n>` pins a number |
 | `--target-repo owner/repo` | all | Act on another repo (must be same-repo or in `--allowed-repos`) |
 | `--allowed-repos o/r,o/r2` | all | Allow-list for cross-repo `--target-repo` (default deny) |
-| `--labels a,b` / `--reviewers u1,u2` | `create-pull-request` | Auto-apply labels / request reviewers on the new PR |
+| `--allowed-labels a,b` | `create-issue` | Gate the agent-supplied labels on the new issue (glob patterns OK) |
+| `--labels a,b` | `create-issue`, `create-pull-request` | Author-set labels always applied to the new issue/PR |
+| `--assignees u1,u2` | `create-issue` | Auto-assign the new issue |
+| `--reviewers u1,u2` | `create-pull-request` | Request reviewers on the new PR |
+| `--title-prefix "<s>"` | `create-issue`, `create-discussion` | Prefix the agent's title (e.g. `"[bot] "`) |
+| `--category name` | `create-discussion` | Pin the discussion category (else the workflow's default / first) |
+| `--allow-body true\|false` | `close-issue` | Allow an agent-supplied closing comment (default `true`) |
 | `--footer` / `--no-footer` / `--footer-text "<tmpl>"` | body ops | Attribution footer (default **on**); `{workflow}`/`{run_url}`/`{repo}` placeholders |
 
 Run-wide `--max` needs a per-instance state dir; the harness supplies it via the `MCP_STATE_DIR`
@@ -107,10 +114,15 @@ separately). Without it, the CLI falls back to a best-effort dir under `RUNNER_T
 ## Sanitization
 
 Body and title content the agent supplies is sanitized before it becomes a durable GitHub
-artifact (see `src/sanitize.js`): control characters are stripped, CRLF is normalized, the text
-is length-capped, and `@mentions` are neutralized (wrapped in backticks) so a privileged
-host-side writer can't be used to mass-notify people or ping teams. Legitimate Markdown is left
-intact.
+artifact (see `src/sanitize.js`). Applied everywhere: Unicode NFC normalization, control-character
+and zero-width-character removal, and CRLF normalization. Applied **outside code regions** (fenced
+```` ``` ```` blocks and inline `` `code` `` are left intact): `@mentions` are neutralized (wrapped
+in backticks) so a privileged host-side writer can't mass-notify people or ping teams, and dangerous
+raw HTML (`<script>`/`<iframe>`/`<object>`/`<style>`/`on*=` handlers, …) is stripped. Oversized
+content is **rejected** (not silently truncated) against a per-field max length. Optionally, with
+`--allowed-domains`, any body linking to a domain outside the allow-list is rejected. Legitimate
+Markdown is left intact. (Some further defenses — slash-command escaping, closing-keyword defang —
+are tracked as future work in `docs/parity-gh-aw.md` §4.1.)
 
 ## Environment
 
