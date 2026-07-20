@@ -78,9 +78,14 @@ context + call the shared helpers." §3.1 and §4.1 are largely independent (can
 mirrors of add-labels/update-issue; `create-issue` is a creation op in the current repo. Two items
 carry **real decisions** (resolve before building them):
 
-1. **`create-discussion` needs GraphQL.** GitHub Discussions are **GraphQL-only** — not in the REST API
-   `src/github.js` speaks. Adding it means teaching the client GraphQL (implementation cost), so it's not
-   a plug-in like the REST ops.
+1. **`create-discussion` needs GraphQL (small, no new dependency).** GitHub Discussions are
+   **GraphQL-only** — not in the REST API `src/github.js` speaks today. But this is a *small* addition,
+   **not** a bundle/size problem: `github.js` already uses built-in `fetch`, so GraphQL is just a
+   `POST /graphql` with `{ query, variables }` — no library, and safe-outputs ships `src/` unbundled
+   anyway. The only real differences from REST: (a) it needs **node IDs** — create-discussion first looks
+   up the repository ID + category ID (extra queries), and (b) GraphQL returns **HTTP 200 even on
+   errors** (errors in `body.errors`), so a `graphql()` helper checks that instead of `res.ok`. Net: a
+   tiny helper + a 2–3-step create flow.
 2. **Creation vs. object-acting `target`.** The §3.1 `target` model is written for ops that *act on* the
    triggering object. **Creation ops** (`create-issue`, `create-discussion`, `create-pull-request`) have
    no triggering-object target — they take **`target-repo` only** (where to create), not `target`. Fold
@@ -89,8 +94,35 @@ carry **real decisions** (resolve before building them):
 **Out of scope for this repo:** `missing-tool` / `missing-data` / `report-incomplete` / `noop` are **not
 safe outputs** — they're the agent reporting back to the Actions run (annotations + step status), which
 is a **harness (microvm-agent) concern**, always-on and independent of safe-outputs config. gh-aw bundles
-them into its safe-outputs pipeline; we deliberately separate them. Tracked in `microvm-agent/TODO.md`
-(built-in diagnostics MCP + the workflow-command-injection guard on the guest console stream).
+them into its safe-outputs pipeline; we deliberately separate them. **The harness plan is summarized in
+§2.2 below** (full detail lives in `microvm-agent/TODO.md`).
+
+### 2.2 Harness-side error surfacing (NOT this repo — summarized for planning)
+
+Lives in **microvm-agent**, not safe-outputs; captured here so the build plan is self-contained. This is
+how the agent's problems surface on the Actions run, orthogonal to safe outputs (GitHub writes).
+
+- **Result model — how a step passes/fails.** Actions decides a step's result from the **exit code of the
+  step process** (`node dist/index.js` = microvm-agent), NOT the guest agent. `core.setFailed()` = exit 1
+  + an `::error::` annotation; **there is no `::set-result::` command**. The Copilot CLI's exit code lives
+  in the guest and surfaces to the harness via the console (`=== GUEST: AGENT_EXIT=$? ===`). microvm-agent
+  grades in **three layers**: (1) infra/boot failure → fail; (2) **guest agent exited non-zero** → fail
+  (read `AGENT_EXIT`); (3) **agent exited 0 but couldn't do the job** → the agent must *declare* it (no
+  exit code / workflow command can express "ran fine but unachievable").
+- **Built-in diagnostics MCP (always-on).** A harness-provided `/__mcp` shim (not user-configured)
+  exposing `report_error` / `report_warning` / `report_missing_tool` / `report_missing_data` /
+  `report_incomplete` / `noop`. Host-side handler → `core.error()`/`core.warning()` annotations, emitted
+  **inline in real time** (the dispatch server is alive during the run). Only layer-3 needs this MCP;
+  `report_incomplete` (name open: `report_failure`/`fail`) is an **asymmetric fail-only** signal that sets
+  the step to failed even on a clean exit. Success is the default.
+- **Stdout allowlist filter (fixes a workflow-command-injection bug).** The harness streams the guest
+  console to the step log, so a guest could inject `::set-output::`/`::add-path::`/etc. Fix: parse guest
+  stdout/stderr line-by-line — **allow** informational commands inline (`::error::`, `::warning::`,
+  `::notice::`, `::debug::`, `::group::`/`::endgroup::`) and **neutralize** capability commands
+  (`::set-output::`, `::save-state::`, `::add-path::`, `::set-env::`, `::add-mask::`, `::stop-commands::`,
+  …). This gives inline errors AND blocks injection; pairs with the MCP (which owns the status signal).
+- **Known grading gap (bug):** `gradeConsole` currently only checks the "starting copilot" marker, so a
+  crash-after-start grades as success — it must also honor `AGENT_EXIT` (layer 2).
 
 ---
 
