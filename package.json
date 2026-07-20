@@ -15,11 +15,16 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build": "ncc build setup/index.js -o setup/dist"
   },
   "engines": {
     "node": ">=20"
   },
   "license": "MIT",
-  "private": false
+  "private": false,
+  "devDependencies": {
+    "@actions/core": "^3.0.1",
+    "@vercel/ncc": "^0.38.3"
+  }
 }

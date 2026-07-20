@@ -8,7 +8,8 @@ author: "ericsciple"
 # runner's own Node from externals — which we bake into the CLI wrapper. That way the
 # wrapper never assumes `node` is on PATH (a workflow without setup-node has no `node`
 # on PATH), and we avoid a global `npm install -g` that would leak across jobs on
-# self-hosted runners.
+# self-hosted runners. Bundled with ncc (dist/index.js) so @actions/core ships with it;
+# rebuild with `npm run build` after changing setup/index.js.
 runs:
   using: "node20"
-  main: "index.js"
+  main: "dist/index.js"
