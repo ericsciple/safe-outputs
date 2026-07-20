@@ -45,9 +45,12 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 - `create-issue` — arguably the single most-used safe output. **We lack it.**
 - `create-discussion`, `close-issue`, `remove-labels`, `push-to-pull-request-branch`.
 
-**System / "mandatory" in gh-aw (cheap, useful) — we have none:**
-- `missing-tool` — agent reports a capability it needed but didn't have (great signal).
-- `missing-data`, `noop`, `report-incomplete`.
+**System "signals" in gh-aw — NOT safe outputs for us (harness concern, out of scope here):**
+- `missing-tool`, `missing-data`, `report-incomplete`, `noop` aren't GitHub writes — they're the agent
+  **reporting back to the Actions run**. In gh-aw they ride the safe-outputs pipeline; **in our design
+  they belong to the harness (microvm-agent)**, surfaced the Actions-native way (annotations
+  `::error::`/`::warning::` + step status), and should be **always on** (independent of whether any
+  safe output is configured). Tracked in `microvm-agent/TODO.md`, not here. See §2.1.
 
 **Niche / heavy — probably skip for now (~25 types):**
 - Projects (`create-project`, `update-project`, `create-project-status-update`), code scanning
@@ -72,21 +75,22 @@ context + call the shared helpers." §3.1 and §4.1 are largely independent (can
 (§3.1(6)) pairs with §4.1 since both touch bodies.
 
 **After the infra, most of §2 is mechanical** — `remove-labels` and `close-issue` are object-acting
-mirrors of add-labels/update-issue; `create-issue` is a creation op in the current repo. But three items
+mirrors of add-labels/update-issue; `create-issue` is a creation op in the current repo. Two items
 carry **real decisions** (resolve before building them):
 
-1. **`missing-tool` / `missing-data` / `report-incomplete` — no clean sink in our inline model.** gh-aw
-   *collects* these in its async processor and optionally opens an issue; we have **no collection
-   phase**. **DECISION NEEDED:** where does the report go — the **step summary/log**, a **created
-   issue**, or an **action output**? (Leaning: step summary + optional `--create-issue`, mirroring
-   gh-aw's default.)
-2. **`create-discussion` needs GraphQL.** GitHub Discussions are **GraphQL-only** — not in the REST API
+1. **`create-discussion` needs GraphQL.** GitHub Discussions are **GraphQL-only** — not in the REST API
    `src/github.js` speaks. Adding it means teaching the client GraphQL (implementation cost), so it's not
    a plug-in like the REST ops.
-3. **Creation vs. object-acting `target`.** The §3.1 `target` model is written for ops that *act on* the
+2. **Creation vs. object-acting `target`.** The §3.1 `target` model is written for ops that *act on* the
    triggering object. **Creation ops** (`create-issue`, `create-discussion`, `create-pull-request`) have
    no triggering-object target — they take **`target-repo` only** (where to create), not `target`. Fold
    this distinction into the §3.1 target work.
+
+**Out of scope for this repo:** `missing-tool` / `missing-data` / `report-incomplete` / `noop` are **not
+safe outputs** — they're the agent reporting back to the Actions run (annotations + step status), which
+is a **harness (microvm-agent) concern**, always-on and independent of safe-outputs config. gh-aw bundles
+them into its safe-outputs pipeline; we deliberately separate them. Tracked in `microvm-agent/TODO.md`
+(built-in diagnostics MCP + the workflow-command-injection guard on the guest console stream).
 
 ---
 
@@ -299,7 +303,7 @@ safe everywhere and apply throughout.
 ## 6. Prioritized gap list (for one-by-one decisions later)
 
 **P0 — cheap, high value**
-- Add `create-issue` (most-used) and `missing-tool` (agent signals a missing capability).
+- Add `create-issue` (most-used). (`missing-tool` et al. moved to the harness — see §2 / microvm-agent.)
 - Sanitization hardening (transforms): **zero-width/Unicode NFC**, **HTML/script stripping**, XML-comment
   removal + code-fence balancing; and move policy checks to **reject-inline** per the locked §4.1 split
   (reject oversize/bad-domain/over-limit/disallowed-label; no silent truncation).
