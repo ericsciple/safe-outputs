@@ -6,6 +6,8 @@
 // triggering issue/PR. Body and title are sanitized before they are written.
 
 import { sanitizeText, sanitizeTitle } from "../sanitize.js";
+import { checkAllowedDomains } from "../domains.js";
+import { parseList } from "../glob.js";
 
 export default {
   id: "update-issue",
@@ -45,7 +47,7 @@ export default {
    * @param {{request: Function}} github - GitHub client
    * @returns {Promise<string>} human-readable summary
    */
-  async apply(args, ctx, github) {
+  async apply(args, ctx, github, config = {}) {
     const patch = {};
     const changed = [];
     if (args.title !== undefined) {
@@ -54,6 +56,7 @@ export default {
     }
     if (args.body !== undefined) {
       patch.body = sanitizeText(args.body, { maxLength: 65536 });
+      checkAllowedDomains(patch.body, parseList(config.allowedDomains));
       changed.push("body");
     }
     if (args.state !== undefined) {

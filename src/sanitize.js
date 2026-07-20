@@ -18,13 +18,40 @@ const DEFAULT_MAX_LENGTH = 65536;
 // Control chars to drop: C0 controls and DEL, but keep \t (\u0009) and \n (\u000A).
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
+// Zero-width / BOM chars used for spoofing — removed everywhere (safe).
+const ZERO_WIDTH = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
+
 // A GitHub @mention or @org/team reference, only when not already inside a code
 // span (i.e. not immediately preceded by a backtick) and not part of an email or
 // longer word (must follow start/whitespace/punctuation).
 const MENTION = /(^|[\s([{<>,:;!?"'*_~-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9._-]+)?)/g;
 
+// Dangerous HTML elements (removed) + inline event-handler attributes (removed).
+const DANGEROUS_TAGS = /<\/?(?:script|iframe|object|embed|style|link|meta|base)\b[^>]*>/gi;
+const ON_HANDLERS = /\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
+
 // http/https links, for counting (not rewriting).
 const LINK = /\bhttps?:\/\/[^\s)<>\]]+/gi;
+
+// Apply `fn` only to PROSE regions, preserving fenced (```...```) and inline (`...`)
+// code verbatim — so a legitimate code snippet inside a body isn't mangled (matches
+// gh-aw's "preserve code blocks verbatim").
+function mapProse(text, fn) {
+  return text
+    .split(/(```[\s\S]*?```)/g)
+    .map((part, i) => {
+      if (i % 2 === 1) return part; // fenced code block — leave verbatim
+      return part
+        .split(/(`[^`\n]*`)/g)
+        .map((seg, j) => (j % 2 === 1 ? seg : fn(seg)))
+        .join("");
+    })
+    .join("");
+}
+
+function stripDangerousHtml(s) {
+  return s.replace(DANGEROUS_TAGS, "").replace(ON_HANDLERS, "");
+}
 
 /**
  * @param {string} text
@@ -34,12 +61,21 @@ const LINK = /\bhttps?:\/\/[^\s)<>\]]+/gi;
  * @returns {string}
  */
 export function sanitizeText(text, { maxLength = DEFAULT_MAX_LENGTH, neutralizeMentions = true } = {}) {
-  let out = String(text);
+  // Safe, mechanical transforms applied everywhere (incl. code): NFC normalize,
+  // CRLF->LF, strip control + zero-width chars.
+  let out = String(text).normalize("NFC");
   out = out.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   out = out.replace(CONTROL_CHARS, "");
-  if (neutralizeMentions) {
-    out = out.replace(MENTION, (_, pre, handle) => `${pre}\`@${handle}\``);
-  }
+  out = out.replace(ZERO_WIDTH, "");
+  // Char-altering transforms applied to PROSE only (preserve code regions):
+  out = mapProse(out, (prose) => {
+    let p = stripDangerousHtml(prose);
+    if (neutralizeMentions) {
+      p = p.replace(MENTION, (_, pre, handle) => `${pre}\`@${handle}\``);
+    }
+    return p;
+  });
+  // Defensive cap (oversize is normally rejected earlier by schema maxLength).
   if (out.length > maxLength) {
     out = out.slice(0, maxLength);
   }

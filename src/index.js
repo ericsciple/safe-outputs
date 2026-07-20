@@ -11,3 +11,4 @@ export { claimCall, resolveMax } from "./limits.js";
 export { matchesGlob, parseList } from "./glob.js";
 export { resolveRepo, resolveIssueNumber, augmentSchemaForTarget } from "./targets.js";
 export { renderFooter, withFooter, footerEnabled } from "./footer.js";
+export { checkAllowedDomains } from "./domains.js";

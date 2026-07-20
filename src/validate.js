@@ -61,6 +61,10 @@ function check(schema, value, path, errors) {
   if (typeof value === "string" && typeof schema.minLength === "number" && value.length < schema.minLength) {
     errors.push(`${path}: must be at least ${schema.minLength} character(s)`);
   }
+
+  if (typeof value === "string" && typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+    errors.push(`${path}: must be at most ${schema.maxLength} character(s) (it is ${value.length})`);
+  }
 }
 
 function matchesType(type, value) {

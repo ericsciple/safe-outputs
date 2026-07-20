@@ -7,6 +7,8 @@
 
 import { sanitizeText, countLinks } from "../sanitize.js";
 import { withFooter } from "../footer.js";
+import { checkAllowedDomains } from "../domains.js";
+import { parseList } from "../glob.js";
 
 export default {
   id: "add-comment",
@@ -51,6 +53,8 @@ export default {
     }
 
     body = withFooter(body, config);
+
+    checkAllowedDomains(body, parseList(config.allowedDomains));
 
     const res = await github.request(
       "POST",

@@ -10,6 +10,7 @@
 import { sanitizeText, sanitizeTitle } from "../sanitize.js";
 import { requirePullRequestContext } from "../context.js";
 import { withFooter } from "../footer.js";
+import { checkAllowedDomains } from "../domains.js";
 import { parseList } from "../glob.js";
 
 export default {
@@ -54,9 +55,11 @@ export default {
    * @returns {Promise<string>} human-readable summary
    */
   async apply(args, ctx, github, config = {}) {
+    const body = withFooter(sanitizeText(args.body, { maxLength: 65536 }), config);
+    checkAllowedDomains(body, parseList(config.allowedDomains));
     const res = await github.request("POST", `/repos/${ctx.owner}/${ctx.repo}/pulls`, {
       title: sanitizeTitle(args.title),
-      body: withFooter(sanitizeText(args.body, { maxLength: 65536 }), config),
+      body,
       head: ctx.headBranch,
       base: ctx.baseBranch,
       draft: args.draft === undefined ? true : args.draft,

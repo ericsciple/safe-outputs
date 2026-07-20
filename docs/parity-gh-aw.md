@@ -299,7 +299,16 @@ content sanitization still matters. What each side does:
 - **Configurable @mention allowlists** (collaborators / teams / event context). We neutralize *all*
   mentions (simpler; arguably a safer default, but less flexible).
 
-### 4.1 When sanitization runs — reject (inline) vs. transform (LOCKED 2026-07-20)
+### 4.1 When sanitization runs — reject (inline) vs. transform (LOCKED 2026-07-20; partly IMPLEMENTED)
+
+**Implementation status (2026-07-20):** DONE — NFC + zero-width removal, control-char strip, CRLF→LF,
+dangerous-HTML stripping (`<script>/<iframe>/<object>/<embed>/<style>/<link>/<meta>/<base>` + `on*`
+handlers), all **code-region-aware** (preserve fenced/inline code); @mention backtick (prose only);
+oversize → **reject** via `maxLength` schema validation (`validate.js`); opt-in URL **domain allow-list**
+→ reject (`--allowed-domains`, `src/domains.js`); over-`--max-links` reject; disallowed-label reject.
+DEFERRED (lower value; GitHub's renderer covers some): slash-command escape, closing-keyword defang,
+XML-comment removal, code-fence balancing, non-http(s)/mailto protocol filtering.
+
 
 - **gh-aw runs it at BOTH ends:** synchronously at the MCP gateway (tool-call time → the model gets
   immediate feedback) **and** in the async processor job (defense-in-depth, after the agent process is
