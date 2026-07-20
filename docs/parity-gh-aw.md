@@ -114,7 +114,7 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   with the `/__mcp` shims — not on PATH, so they don't shadow real tools) — `report-error`,
   `report-warning`, `report-notice`. Each takes the raw message as an arg, does the workflow-command
   **escaping** (`%`→`%25`, `\r`→`%0D`, `\n`→`%0A`), and prints `::error::<escaped>` to the console. The
-  agent runs `"$MV_TOOLS_DIR/report-error" "my message"` — it never hand-formats the workflow command
+  agent runs `"$MV_HELPERS_DIR/report-error" "my message"` — it never hand-formats the workflow command
   (the fragile part `core.error()` does host-side). The line prints to the guest console → the **stdout
   allowlist filter** (below) passes `::error::`/`::warning::`/`::notice::` through → the runner renders it
   **inline**. All **guest-side**, no dispatch round-trip. Deliver the helpers per-run (e.g. on the `/__rt`
@@ -122,10 +122,11 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   **not** on PATH.
 - **Well-known env vars for the tool dirs (avoid hardcoded paths).** Both the MCP shims dir and the
   built-in helpers dir should be surfaced via **well-known env vars** so authors/prompts reference
-  `"$MV_MCP_DIR/<server>"` and `"$MV_TOOLS_DIR/report-error"` instead of hardcoding `/__mcp` / the helper
+  `"$MV_MCP_DIR/<server>"` and `"$MV_HELPERS_DIR/report-error"` instead of hardcoding `/__mcp` / the helper
   path — decoupling customers from the actual directory names (which we can then change freely). Today the
-  preamble hardcodes `/__mcp`; switch it to `$MV_MCP_DIR`. (Env-var names open; could also colocate both
-  in one dir + one var, but two keeps MCP-forwarders vs. local-helpers distinct.)
+  preamble hardcodes `/__mcp`; switch it to `$MV_MCP_DIR`. (Env-var names open; `MV_HELPERS_DIR` chosen
+  over `MV_TOOLS_DIR` to avoid confusion with the **tool cache** `RUNNER_TOOL_CACHE`/`/__t`. Could also
+  colocate both in one dir + one var, but two keeps MCP-forwarders vs. local-helpers distinct.)
 - **Status signal (fail the step) — the one thing that needs the host.** Printing `::error::` can't fail
   the step (that's microvm-agent's exit code, not a message). So `report-incomplete` (name open:
   `report-failure`/`fail`) is a guest helper that prints an `::error::` **plus a machine-readable sentinel**
