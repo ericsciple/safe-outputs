@@ -110,14 +110,22 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   (read `AGENT_EXIT`); (3) **agent exited 0 but couldn't do the job** → the agent must *declare* it (no
   exit code / workflow command can express "ran fine but unachievable").
 - **Error surfacing — guest-side helper scripts (preferred; no MCP round-trip).** For inline
-  `error`/`warning`/`notice`, ship tiny helper scripts on the guest PATH (`report-error`,
-  `report-warning`, `report-notice`) that take the raw message as an arg, do the workflow-command
-  **escaping** (`%`→`%25`, `\r`→`%0D`, `\n`→`%0A`), and print `::error::<escaped>` to the console. The
-  agent just runs `report-error "my message"` — it never hand-formats the workflow command (that's the
-  fragile part `core.error()` does host-side). The line prints to the guest console → the **stdout
+  `error`/`warning`/`notice`, ship tiny helper scripts in a **harness-owned dir, off-PATH** (consistent
+  with the `/__mcp` shims — not on PATH, so they don't shadow real tools) — `report-error`,
+  `report-warning`, `report-notice`. Each takes the raw message as an arg, does the workflow-command
+  **escaping** (`%`→`%25`, `\r`→`%0D`, `\n`→`%0A`), and prints `::error::<escaped>` to the console. The
+  agent runs `"$MV_TOOLS_DIR/report-error" "my message"` — it never hand-formats the workflow command
+  (the fragile part `core.error()` does host-side). The line prints to the guest console → the **stdout
   allowlist filter** (below) passes `::error::`/`::warning::`/`::notice::` through → the runner renders it
   **inline**. All **guest-side**, no dispatch round-trip. Deliver the helpers per-run (e.g. on the `/__rt`
-  or `/__mcp` mount, added to PATH), not baked into the prebuilt rootfs.
+  or `/__mcp` mount) in a dir that's granted via `--add-dir`; **not** baked into the prebuilt rootfs, and
+  **not** on PATH.
+- **Well-known env vars for the tool dirs (avoid hardcoded paths).** Both the MCP shims dir and the
+  built-in helpers dir should be surfaced via **well-known env vars** so authors/prompts reference
+  `"$MV_MCP_DIR/<server>"` and `"$MV_TOOLS_DIR/report-error"` instead of hardcoding `/__mcp` / the helper
+  path — decoupling customers from the actual directory names (which we can then change freely). Today the
+  preamble hardcodes `/__mcp`; switch it to `$MV_MCP_DIR`. (Env-var names open; could also colocate both
+  in one dir + one var, but two keeps MCP-forwarders vs. local-helpers distinct.)
 - **Status signal (fail the step) — the one thing that needs the host.** Printing `::error::` can't fail
   the step (that's microvm-agent's exit code, not a message). So `report-incomplete` (name open:
   `report-failure`/`fail`) is a guest helper that prints an `::error::` **plus a machine-readable sentinel**
