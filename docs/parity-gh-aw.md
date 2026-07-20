@@ -115,6 +115,13 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   **inline in real time** (the dispatch server is alive during the run). Only layer-3 needs this MCP;
   `report_incomplete` (name open: `report_failure`/`fail`) is an **asymmetric fail-only** signal that sets
   the step to failed even on a clean exit. Success is the default.
+  - **No new shell script needed; newlines handled both ends.** It reuses the existing per-server shim
+    (`generateServerShim`) — a small POSIX `sh` script that builds the JSON call with `jq --args "$@"`,
+    which safely encodes newlines/quotes/special chars. Host-side, `core.error()` escapes the message for
+    the `::error::` command (`\n`→`%0A`), so multi-line errors round-trip correctly. The real work is a
+    **built-in/in-process dispatch handler** (the diagnostics "server" isn't an external stdio process —
+    its `tools/call` runs in-process and calls `core.*` directly; small `dispatch.js` extension). Usability
+    note: a multi-line message must be passed as **one quoted argument** (normal shell quoting).
 - **Stdout allowlist filter (fixes a workflow-command-injection bug).** The harness streams the guest
   console to the step log, so a guest could inject `::set-output::`/`::add-path::`/etc. Fix: parse guest
   stdout/stderr line-by-line — **allow** informational commands inline (`::error::`, `::warning::`,
