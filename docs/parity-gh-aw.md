@@ -127,6 +127,11 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   preamble hardcodes `/__mcp`; switch it to `$MV_MCP_DIR`. (Env-var names open; `MV_HELPERS_DIR` chosen
   over `MV_TOOLS_DIR` to avoid confusion with the **tool cache** `RUNNER_TOOL_CACHE`/`/__t`. Could also
   colocate both in one dir + one var, but two keeps MCP-forwarders vs. local-helpers distinct.)
+  - **Folder name:** `$MV_HELPERS_DIR = /__helpers` (matches the `/__` convention: `/__w`, `/__t`,
+    `/__mcp`, `/__rt`). Must be granted via `--add-dir` so the agent can execute the helpers. Physical
+    delivery is an implementation detail hidden by the env var — either a **dedicated `/__helpers` RO
+    mount**, or **colocated on the existing `/__rt` mount** (`/__rt/helpers`) to avoid a separate
+    virtio drive for a few tiny scripts (leaning colocate).
 - **Status signal (fail the step) — the one thing that needs the host.** Printing `::error::` can't fail
   the step (that's microvm-agent's exit code, not a message). So `report-incomplete` (name open:
   `report-failure`/`fail`) is a guest helper that prints an `::error::` **plus a machine-readable sentinel**
