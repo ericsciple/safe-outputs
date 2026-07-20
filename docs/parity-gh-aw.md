@@ -106,6 +106,13 @@ them into its safe-outputs pipeline; we deliberately separate them. **The harnes
 
 ### 2.2 Harness-side error surfacing (NOT this repo — summarized for planning)
 
+**STATUS (2026-07-20): IMPLEMENTED in microvm-agent (commit `f9ecea8`) + e2e-verified (run 29785231902).**
+Guest helper scripts (`report-error`/`report-warning`/`report-notice`/`report-incomplete`) in
+`/__rt/helpers` via `$MV_HELPERS_DIR`; stdout allowlist filter (`console-filter.js`) blocks
+workflow-command injection while passing inline annotations; grader honors `AGENT_EXIT` + the
+report-incomplete sentinel; event.json moved to `/__rt`; `$MV_MCP_DIR`/`$MV_HELPERS_DIR` exported and
+used by the preamble; mcp-config server names validated. See `microvm-agent/TODO.md` for the full record.
+
 Lives in **microvm-agent**, not safe-outputs; captured here so the build plan is self-contained. This is
 how the agent's problems surface on the Actions run, orthogonal to safe outputs (GitHub writes).
 
