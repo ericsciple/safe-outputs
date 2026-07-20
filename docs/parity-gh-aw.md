@@ -123,6 +123,11 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   …). This gives inline errors AND blocks injection; pairs with the MCP (which owns the status signal).
 - **Known grading gap (bug):** `gradeConsole` currently only checks the "starting copilot" marker, so a
   crash-after-start grades as success — it must also honor `AGENT_EXIT` (layer 2).
+- **Preamble edit required.** The MCP preamble (`generateMcpPreamble`, prepended to the user prompt) must
+  gain a short **behavioral** instruction for the diagnostics tools — especially "if you cannot complete
+  the task, call `report_incomplete` with a reason." Lazy `--help` discovery conveys a tool's *inputs*,
+  not *when to use it*, so the status-affecting signal won't fire unless the agent is told. A deliberate
+  exception to the tiny/lazy-preamble rule (1–2 lines), justified because it's always-on + status-critical.
 
 ---
 
