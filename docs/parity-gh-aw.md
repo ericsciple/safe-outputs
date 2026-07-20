@@ -131,7 +131,13 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
     `/__mcp`, `/__rt`). Must be granted via `--add-dir` so the agent can execute the helpers. Physical
     delivery is an implementation detail hidden by the env var — either a **dedicated `/__helpers` RO
     mount**, or **colocated on the existing `/__rt` mount** (`/__rt/helpers`) to avoid a separate
-    virtio drive for a few tiny scripts (leaning colocate).
+    virtio drive for a few tiny scripts (leaning colocate). **Decided:** `/__rt/helpers`.
+  - **Also move `event.json` from `/__mcp` → `/__rt`.** It's per-run agent *context* (data), not a tool,
+    so it belongs with `/__rt`'s prompt/env/config, leaving `/__mcp` = shims only. Transparent (the agent
+    reads it via `$GITHUB_EVENT_PATH`), and it **simplifies mount logic**: `/__mcp` is then created only
+    when there are MCP servers (today it's also created just to carry `event.json`), while `/__rt` always
+    exists. Requires `--add-dir /__rt` (which we grant anyway for `/__rt/helpers`; safe — `/__rt` holds
+    only non-secrets: the fake token, the public CA, the prompt, the no-secret mcp-config).
 - **Status signal (fail the step) — the one thing that needs the host.** Printing `::error::` can't fail
   the step (that's microvm-agent's exit code, not a message). So `report-incomplete` (name open:
   `report-failure`/`fail`) is a guest helper that prints an `::error::` **plus a machine-readable sentinel**
