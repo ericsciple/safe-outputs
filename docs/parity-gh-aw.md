@@ -109,32 +109,36 @@ how the agent's problems surface on the Actions run, orthogonal to safe outputs 
   grades in **three layers**: (1) infra/boot failure → fail; (2) **guest agent exited non-zero** → fail
   (read `AGENT_EXIT`); (3) **agent exited 0 but couldn't do the job** → the agent must *declare* it (no
   exit code / workflow command can express "ran fine but unachievable").
-- **Built-in diagnostics MCP (always-on).** A harness-provided `/__mcp` shim (not user-configured)
-  exposing `report_error` / `report_warning` / `report_missing_tool` / `report_missing_data` /
-  `report_incomplete` / `noop`. Host-side handler → `core.error()`/`core.warning()` annotations, emitted
-  **inline in real time** (the dispatch server is alive during the run). Only layer-3 needs this MCP;
-  `report_incomplete` (name open: `report_failure`/`fail`) is an **asymmetric fail-only** signal that sets
-  the step to failed even on a clean exit. Success is the default.
-  - **No new shell script needed; newlines handled both ends.** It reuses the existing per-server shim
-    (`generateServerShim`) — a small POSIX `sh` script that builds the JSON call with `jq --args "$@"`,
-    which safely encodes newlines/quotes/special chars. Host-side, `core.error()` escapes the message for
-    the `::error::` command (`\n`→`%0A`), so multi-line errors round-trip correctly. The real work is a
-    **built-in/in-process dispatch handler** (the diagnostics "server" isn't an external stdio process —
-    its `tools/call` runs in-process and calls `core.*` directly; small `dispatch.js` extension). Usability
-    note: a multi-line message must be passed as **one quoted argument** (normal shell quoting).
+- **Error surfacing — guest-side helper scripts (preferred; no MCP round-trip).** For inline
+  `error`/`warning`/`notice`, ship tiny helper scripts on the guest PATH (`report-error`,
+  `report-warning`, `report-notice`) that take the raw message as an arg, do the workflow-command
+  **escaping** (`%`→`%25`, `\r`→`%0D`, `\n`→`%0A`), and print `::error::<escaped>` to the console. The
+  agent just runs `report-error "my message"` — it never hand-formats the workflow command (that's the
+  fragile part `core.error()` does host-side). The line prints to the guest console → the **stdout
+  allowlist filter** (below) passes `::error::`/`::warning::`/`::notice::` through → the runner renders it
+  **inline**. All **guest-side**, no dispatch round-trip. Deliver the helpers per-run (e.g. on the `/__rt`
+  or `/__mcp` mount, added to PATH), not baked into the prebuilt rootfs.
+- **Status signal (fail the step) — the one thing that needs the host.** Printing `::error::` can't fail
+  the step (that's microvm-agent's exit code, not a message). So `report-incomplete` (name open:
+  `report-failure`/`fail`) is a guest helper that prints an `::error::` **plus a machine-readable sentinel**
+  line; microvm-agent's **console grading already reads the console**, detects the sentinel, and does
+  `setFailed`. So even this stays a guest-side helper + the host's existing grader — **no diagnostics MCP
+  needed.** (An in-process MCP handler remains a possible alternative if we later want structured
+  outputs/aggregation, but the helper+sentinel path is simpler and covers the requirement.)
 - **Stdout allowlist filter (fixes a workflow-command-injection bug).** The harness streams the guest
   console to the step log, so a guest could inject `::set-output::`/`::add-path::`/etc. Fix: parse guest
   stdout/stderr line-by-line — **allow** informational commands inline (`::error::`, `::warning::`,
-  `::notice::`, `::debug::`, `::group::`/`::endgroup::`) and **neutralize** capability commands
-  (`::set-output::`, `::save-state::`, `::add-path::`, `::set-env::`, `::add-mask::`, `::stop-commands::`,
-  …). This gives inline errors AND blocks injection; pairs with the MCP (which owns the status signal).
+  `::notice::`, `::debug::`, `::group::`/`::endgroup::` — what the helper scripts emit) and **neutralize**
+  capability commands (`::set-output::`, `::save-state::`, `::add-path::`, `::set-env::`, `::add-mask::`,
+  `::stop-commands::`, …). This is what makes the guest-side helper approach safe.
 - **Known grading gap (bug):** `gradeConsole` currently only checks the "starting copilot" marker, so a
-  crash-after-start grades as success — it must also honor `AGENT_EXIT` (layer 2).
+  crash-after-start grades as success — it must also honor `AGENT_EXIT` (layer 2), and the
+  `report-incomplete` sentinel (layer 3).
 - **Preamble edit required.** The MCP preamble (`generateMcpPreamble`, prepended to the user prompt) must
-  gain a short **behavioral** instruction for the diagnostics tools — especially "if you cannot complete
-  the task, call `report_incomplete` with a reason." Lazy `--help` discovery conveys a tool's *inputs*,
-  not *when to use it*, so the status-affecting signal won't fire unless the agent is told. A deliberate
-  exception to the tiny/lazy-preamble rule (1–2 lines), justified because it's always-on + status-critical.
+  gain a short **behavioral** instruction about the helper commands — especially "if you cannot complete
+  the task, run `report-incomplete "<reason>"`; use `report-error`/`report-warning` to surface problems."
+  The agent needs to be told *when* to use them (not just that they exist). A deliberate exception to the
+  tiny-preamble rule (1–2 lines), justified because it's always-on + status-critical.
 
 ---
 
