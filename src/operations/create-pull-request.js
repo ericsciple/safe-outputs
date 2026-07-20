@@ -9,10 +9,14 @@
 
 import { sanitizeText, sanitizeTitle } from "../sanitize.js";
 import { requirePullRequestContext } from "../context.js";
+import { withFooter } from "../footer.js";
+import { parseList } from "../glob.js";
 
 export default {
   id: "create-pull-request",
   name: "create_pull_request",
+  targetKind: "pull-request",
+  defaultMax: 1,
   // Context for a PR is the source/target branch (bound host-side), not the
   // triggering issue, so this operation uses a different context requirement.
   requireContext: requirePullRequestContext,
@@ -49,15 +53,38 @@ export default {
    * @param {{request: Function}} github - GitHub client
    * @returns {Promise<string>} human-readable summary
    */
-  async apply(args, ctx, github) {
+  async apply(args, ctx, github, config = {}) {
     const res = await github.request("POST", `/repos/${ctx.owner}/${ctx.repo}/pulls`, {
       title: sanitizeTitle(args.title),
-      body: sanitizeText(args.body, { maxLength: 65536 }),
+      body: withFooter(sanitizeText(args.body, { maxLength: 65536 }), config),
       head: ctx.headBranch,
       base: ctx.baseBranch,
       draft: args.draft === undefined ? true : args.draft,
     });
     const where = `${ctx.owner}/${ctx.repo}`;
+    const prNumber = res && res.number;
+
+    // Author-supplied extras (never agent-settable): auto-apply labels + request
+    // reviewers on the new PR. Best-effort — a failure here doesn't undo the PR.
+    if (prNumber) {
+      const labels = parseList(config.labels);
+      if (labels.length) {
+        try {
+          await github.request("POST", `/repos/${ctx.owner}/${ctx.repo}/issues/${prNumber}/labels`, { labels });
+        } catch {
+          /* best effort */
+        }
+      }
+      const reviewers = parseList(config.reviewers);
+      if (reviewers.length) {
+        try {
+          await github.request("POST", `/repos/${ctx.owner}/${ctx.repo}/pulls/${prNumber}/requested_reviewers`, { reviewers });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+
     return res && res.html_url
       ? `Opened pull request on ${where}: ${res.html_url}`
       : `Opened pull request on ${where} (${ctx.headBranch} → ${ctx.baseBranch}).`;

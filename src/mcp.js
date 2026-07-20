@@ -17,13 +17,15 @@ const SERVER_VERSION = "0.1.0";
  * @param {(args: object) => Promise<string>} params.apply - performs the effect and
  *        returns a human-readable summary. Kept separate from the operation so tests
  *        (and the CLI) can inject context + a GitHub client at call time.
+ * @param {object} [params.schema] - effective input schema (defaults to
+ *        operation.inputSchema); the CLI may augment it based on config (e.g. --target *).
  * @param {(msg: string) => void} [params.log]
  */
-export function createMcpServer({ operation, apply, log = () => {} }) {
+export function createMcpServer({ operation, apply, schema = operation.inputSchema, log = () => {} }) {
   const tool = {
     name: operation.name,
     description: operation.description,
-    inputSchema: operation.inputSchema,
+    inputSchema: schema,
   };
 
   async function handle(message) {
@@ -71,7 +73,7 @@ export function createMcpServer({ operation, apply, log = () => {} }) {
 
     // Validation failures come back as a tool error (isError) rather than a
     // JSON-RPC error, so the model sees the message and can self-correct.
-    const errors = validate(operation.inputSchema, args);
+    const errors = validate(tool.inputSchema, args);
     if (errors.length) {
       return ok(id, toolError(`Invalid arguments for ${operation.name}:\n- ${errors.join("\n- ")}`));
     }

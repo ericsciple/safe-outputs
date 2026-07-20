@@ -80,15 +80,25 @@ scope with flags placed **after the operation id** — the harness puts them on 
 so the agent never sees or controls them:
 
 ```
-safe-outputs add-labels --allowed-labels bug,triage,question --max 3
-safe-outputs add-comment --max-links 10
+safe-outputs add-labels --allowed bug,triage,question --max 3
+safe-outputs add-comment --max-links 10 --no-footer
 ```
 
 | Flag | Operation | Effect |
 |---|---|---|
-| `--allowed-labels a,b,c` | `add-labels` | Reject any label not in the allow-list |
-| `--max N` | `add-labels` | Reject calls adding more than N labels |
+| `--allowed a,b,c` | `add-labels` | Reject any label not in the allow-list (glob patterns OK) |
+| `--blocked a,*[bot]` | `add-labels` | Reject any label matching the block-list (glob patterns OK) |
+| `--max N` | all | Cap at N **calls per run** (also caps labels per call for `add-labels`). `-1` = unlimited |
 | `--max-links N` | `add-comment` | Reject a comment body with more than N links |
+| `--target triggering\|*\|<n>` | issue ops | Which object to act on. Default `triggering`; `*` lets the agent pass `item_number`; `<n>` pins a number |
+| `--target-repo owner/repo` | all | Act on another repo (must be same-repo or in `--allowed-repos`) |
+| `--allowed-repos o/r,o/r2` | all | Allow-list for cross-repo `--target-repo` (default deny) |
+| `--labels a,b` / `--reviewers u1,u2` | `create-pull-request` | Auto-apply labels / request reviewers on the new PR |
+| `--footer` / `--no-footer` / `--footer-text "<tmpl>"` | body ops | Attribution footer (default **on**); `{workflow}`/`{run_url}`/`{repo}` placeholders |
+
+Run-wide `--max` needs a per-instance state dir; the harness supplies it via the `MCP_STATE_DIR`
+env var (each configured MCP server instance gets its own, so the same server added twice counts
+separately). Without it, the CLI falls back to a best-effort dir under `RUNNER_TEMP`.
 
 ## Sanitization
 

@@ -13,9 +13,11 @@
 import { getOperation, operationIds } from "./operations/index.js";
 import { createMcpServer } from "./mcp.js";
 import { serve } from "./serve.js";
-import { loadContext, requireIssueContext } from "./context.js";
+import { loadContext, requireIssueContext, requirePullRequestContext } from "./context.js";
 import { createGitHubClient } from "./github.js";
 import { parseConfig } from "./config.js";
+import { claimCall } from "./limits.js";
+import { resolveRepo, resolveIssueNumber, augmentSchemaForTarget } from "./targets.js";
 
 function usage(stream) {
   stream.write(
@@ -58,21 +60,47 @@ function main(argv = process.argv) {
   // Bind context + GitHub client lazily, at call time, so the server can start
   // (and advertise its schema) even before an event/token is needed, and so a
   // missing-context error surfaces as an actionable tool error to the model.
-  // Each operation picks how much context it requires (an issue vs. a PR branch).
-  const requireContext = operation.requireContext || requireIssueContext;
   async function apply(args) {
-    const ctx = requireContext(loadContext());
+    const raw = loadContext();
+    const ctx = resolveContext(operation, raw, config, args);
     const github = createGitHubClient();
+    // Enforce the run-wide call-count cap right before the write (validation already
+    // passed; a validation reject never reaches here, so it burns no budget).
+    claimCall(operation.id, config, operation.defaultMax);
     return operation.apply(args, ctx, github, config);
   }
+
+  // For object-acting ops, `--target *` lets the agent name the item; augment the
+  // advertised schema so `item_number` is accepted (and required) in that mode.
+  const schema =
+    operation.targetKind === "issue" ? augmentSchemaForTarget(operation.inputSchema, config) : operation.inputSchema;
 
   const server = createMcpServer({
     operation,
     apply,
+    schema,
     log: (msg) => process.stderr.write(`[safe-outputs/${operation.id}] ${msg}\n`),
   });
 
   serve(server);
+}
+
+/**
+ * Resolve the effective target (owner/repo + issue number, or PR branches) from the
+ * event context, the author's flags, and the agent's args. The safe default is the
+ * triggering object in the current repo; widening (`--target`, `--target-repo`) is
+ * author-supplied only.
+ */
+function resolveContext(operation, raw, config, args) {
+  if (operation.targetKind === "pull-request") {
+    const ctx = requirePullRequestContext(raw);
+    const { owner, repo } = resolveRepo(ctx, config);
+    return { ...ctx, owner, repo };
+  }
+  // Object-acting ("issue") ops: resolve repo + issue/PR number.
+  const { owner, repo } = resolveRepo(raw, config);
+  const issueNumber = resolveIssueNumber(raw, config, args);
+  return { ...raw, owner, repo, issueNumber };
 }
 
 main();

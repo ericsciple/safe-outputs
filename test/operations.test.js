@@ -47,7 +47,7 @@ test("add-comment: schema exposes body only", () => {
 
 test("add-comment: applies to the bound issue and returns the url", async () => {
   const gh = fakeGitHub({ html_url: "https://github.com/octo/repo/issues/42#issuecomment-1" });
-  const summary = await addComment.apply({ body: "hello" }, ctx, gh);
+  const summary = await addComment.apply({ body: "hello" }, ctx, gh, { noFooter: true });
   assert.deepEqual(gh.calls[0], {
     method: "POST",
     path: "/repos/octo/repo/issues/42/comments",
@@ -58,7 +58,7 @@ test("add-comment: applies to the bound issue and returns the url", async () => 
 
 test("add-comment: sanitizes the body before posting (neutralizes @mentions)", async () => {
   const gh = fakeGitHub({});
-  await addComment.apply({ body: "ping @octocat" }, ctx, gh);
+  await addComment.apply({ body: "ping @octocat" }, ctx, gh, { noFooter: true });
   assert.equal(gh.calls[0].body.body, "ping `@octocat`");
 });
 
@@ -77,18 +77,18 @@ test("add-comment: --max-links rejects a body with too many links", async () => 
   assert.equal(gh.calls.length, 0);
 });
 
-test("add-labels: --allowed-labels rejects labels outside the allow-list", async () => {
+test("add-labels: --allowed rejects labels outside the allow-list", async () => {
   const gh = fakeGitHub();
   await assert.rejects(
-    () => addLabels.apply({ labels: ["bug", "wontfix"] }, ctx, gh, { allowedLabels: "bug,triage" }),
+    () => addLabels.apply({ labels: ["bug", "wontfix"] }, ctx, gh, { allowed: "bug,triage" }),
     /not permitted/
   );
   assert.equal(gh.calls.length, 0);
 });
 
-test("add-labels: --allowed-labels permits labels inside the allow-list", async () => {
+test("add-labels: --allowed permits labels inside the allow-list", async () => {
   const gh = fakeGitHub();
-  await addLabels.apply({ labels: ["bug"] }, ctx, gh, { allowedLabels: "bug,triage" });
+  await addLabels.apply({ labels: ["bug"] }, ctx, gh, { allowed: "bug,triage" });
   assert.equal(gh.calls.length, 1);
 });
 
@@ -135,7 +135,8 @@ test("create-pull-request: binds head/base from context and defaults to draft", 
   const summary = await createPullRequest.apply(
     { title: "Fix it", body: "Details ping @octocat" },
     prCtx,
-    gh
+    gh,
+    { noFooter: true }
   );
   assert.deepEqual(gh.calls[0], {
     method: "POST",

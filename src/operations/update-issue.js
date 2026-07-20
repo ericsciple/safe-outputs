@@ -10,6 +10,8 @@ import { sanitizeText, sanitizeTitle } from "../sanitize.js";
 export default {
   id: "update-issue",
   name: "update_issue",
+  targetKind: "issue",
+  defaultMax: 1,
   description:
     "Update the title, body, or open/closed state of the issue this workflow is running on. " +
     "The target is fixed to the triggering issue — you cannot choose a different one. " +

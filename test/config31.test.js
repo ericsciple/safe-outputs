@@ -1,0 +1,146 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { claimCall, resolveMax } from "../src/limits.js";
+import { matchesGlob, parseList } from "../src/glob.js";
+import { resolveRepo, resolveIssueNumber, augmentSchemaForTarget } from "../src/targets.js";
+import { renderFooter, withFooter, footerEnabled } from "../src/footer.js";
+
+// --- limits (run-wide call-count) ---
+
+function freshStateDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "so-state-"));
+}
+
+test("resolveMax: default, override, and -1 (unlimited)", () => {
+  assert.equal(resolveMax(undefined, 3), 3);
+  assert.equal(resolveMax("5", 3), 5);
+  assert.equal(resolveMax("-1", 3), undefined); // unlimited
+  assert.equal(resolveMax("nan", 3), 3);
+});
+
+test("claimCall: allows up to max, rejects beyond, counts per instance dir", () => {
+  const dir = freshStateDir();
+  const env = { MCP_STATE_DIR: dir };
+  claimCall("add-labels", { max: "2" }, 3, env); // 1st ok
+  claimCall("add-labels", { max: "2" }, 3, env); // 2nd ok
+  assert.throws(() => claimCall("add-labels", { max: "2" }, 3, env), /per-run limit of 2/);
+});
+
+test("claimCall: separate ops in the same dir count independently", () => {
+  const dir = freshStateDir();
+  const env = { MCP_STATE_DIR: dir };
+  claimCall("add-labels", { max: "1" }, 3, env); // ok
+  claimCall("add-comment", { max: "1" }, 1, env); // ok (different op file)
+  assert.throws(() => claimCall("add-labels", { max: "1" }, 3, env), /limit of 1/);
+});
+
+test("claimCall: no cap when max is -1", () => {
+  const dir = freshStateDir();
+  const env = { MCP_STATE_DIR: dir };
+  for (let i = 0; i < 5; i++) claimCall("x", { max: "-1" }, 1, env);
+  assert.ok(true);
+});
+
+// --- glob ---
+
+test("matchesGlob: literal and wildcard", () => {
+  assert.ok(matchesGlob("bug", "bug"));
+  assert.ok(!matchesGlob("bug", "triage"));
+  assert.ok(matchesGlob("dependencies[bot]", "*[bot]"));
+  assert.ok(matchesGlob("area/api", "area/*"));
+  assert.ok(!matchesGlob("area/api", "team/*"));
+});
+
+test("parseList: trims, drops empties, handles undefined/bool", () => {
+  assert.deepEqual(parseList("a, b ,,c"), ["a", "b", "c"]);
+  assert.deepEqual(parseList(undefined), []);
+  assert.deepEqual(parseList(true), []);
+});
+
+// --- targets ---
+
+test("resolveRepo: defaults to triggering repo", () => {
+  assert.deepEqual(resolveRepo({ owner: "o", repo: "r" }, {}), { owner: "o", repo: "r" });
+});
+
+test("resolveRepo: cross-repo requires an allow-list (default deny)", () => {
+  assert.throws(
+    () => resolveRepo({ owner: "o", repo: "r" }, { targetRepo: "other/repo" }),
+    /not permitted/
+  );
+  assert.deepEqual(
+    resolveRepo({ owner: "o", repo: "r" }, { targetRepo: "other/repo", allowedRepos: "other/repo" }),
+    { owner: "other", repo: "repo" }
+  );
+});
+
+test("resolveRepo: same repo as target-repo is always allowed", () => {
+  assert.deepEqual(resolveRepo({ owner: "o", repo: "r" }, { targetRepo: "o/r" }), { owner: "o", repo: "r" });
+});
+
+test("resolveRepo: rejects a malformed slug", () => {
+  assert.throws(() => resolveRepo({ owner: "o", repo: "r" }, { targetRepo: "not-a-slug" }), /Expected 'owner\/repo'/);
+});
+
+test("resolveIssueNumber: default binds the triggering number", () => {
+  assert.equal(resolveIssueNumber({ issueNumber: 42 }, {}, {}), 42);
+});
+
+test("resolveIssueNumber: no triggering number and no target -> reject", () => {
+  assert.throws(() => resolveIssueNumber({}, {}, {}), /has no issue\/PR number/);
+});
+
+test("resolveIssueNumber: target '*' takes the agent-supplied item_number", () => {
+  assert.equal(resolveIssueNumber({ issueNumber: 42 }, { target: "*" }, { item_number: 99 }), 99);
+  assert.throws(() => resolveIssueNumber({}, { target: "*" }, {}), /provide 'item_number'/);
+});
+
+test("resolveIssueNumber: explicit numeric target", () => {
+  assert.equal(resolveIssueNumber({ issueNumber: 42 }, { target: "7" }, {}), 7);
+});
+
+test("augmentSchemaForTarget: adds required item_number only under target '*'", () => {
+  const base = { type: "object", required: ["labels"], properties: { labels: {} } };
+  assert.equal(augmentSchemaForTarget(base, {}), base);
+  const aug = augmentSchemaForTarget(base, { target: "*" });
+  assert.ok(aug.properties.item_number);
+  assert.ok(aug.required.includes("item_number"));
+  assert.ok(aug.required.includes("labels"));
+});
+
+// --- footer ---
+
+const FENV = {
+  GITHUB_WORKFLOW: "Triage",
+  GITHUB_REPOSITORY: "octo/repo",
+  GITHUB_SERVER_URL: "https://github.com",
+  GITHUB_RUN_ID: "123",
+};
+
+test("footerEnabled: default on; off via --no-footer / --footer=false", () => {
+  assert.ok(footerEnabled({}));
+  assert.ok(!footerEnabled({ noFooter: true }));
+  assert.ok(!footerEnabled({ footer: "false" }));
+});
+
+test("renderFooter: default template resolves placeholders", () => {
+  const f = renderFooter({}, FENV);
+  assert.equal(f, "> Generated by [Triage](https://github.com/octo/repo/actions/runs/123)");
+});
+
+test("renderFooter: custom template + disabled", () => {
+  assert.equal(renderFooter({ footerText: "by {workflow}" }, FENV), "by Triage");
+  assert.equal(renderFooter({ noFooter: true }, FENV), "");
+});
+
+test("withFooter: appends with a blank-line separator; no-op when disabled", () => {
+  assert.equal(
+    withFooter("Body.", {}, FENV),
+    "Body.\n\n> Generated by [Triage](https://github.com/octo/repo/actions/runs/123)"
+  );
+  assert.equal(withFooter("Body.", { noFooter: true }, FENV), "Body.");
+});

@@ -6,13 +6,16 @@
 // before it is posted (see sanitize.js).
 
 import { sanitizeText, countLinks } from "../sanitize.js";
+import { withFooter } from "../footer.js";
 
 export default {
   id: "add-comment",
   name: "add_comment",
+  targetKind: "issue",
+  defaultMax: 1,
   description:
     "Post a comment on the issue or pull request this workflow is running on. " +
-    "The target is fixed to the triggering issue/PR — you cannot choose a different one.",
+    "The target is fixed to the triggering issue/PR unless the workflow widens it.",
   inputSchema: {
     type: "object",
     required: ["body"],
@@ -35,7 +38,7 @@ export default {
    * @returns {Promise<string>} human-readable summary
    */
   async apply(args, ctx, github, config = {}) {
-    const body = sanitizeText(args.body, { maxLength: 65536 });
+    let body = sanitizeText(args.body, { maxLength: 65536 });
 
     if (config.maxLinks !== undefined) {
       const maxLinks = Number.parseInt(config.maxLinks, 10);
@@ -46,6 +49,8 @@ export default {
         );
       }
     }
+
+    body = withFooter(body, config);
 
     const res = await github.request(
       "POST",
