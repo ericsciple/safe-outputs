@@ -67,6 +67,13 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 
 ### 2.1 Build order + per-op decisions
 
+**STATUS (2026-07-20): IMPLEMENTED + pushed (commit `aa75b5d`).** Added `remove-labels`,
+`close-issue`, `create-issue`, `create-discussion`. `create-discussion` uses a new
+`github.graphql()` client (Discussions are GraphQL-only, no new dependency — built-in `fetch`
+`POST /graphql`). Shared label allow/block/max logic extracted to `src/labelPolicy.js` (add-labels
+now reuses it). `cli.js resolveContext` grew a `targetKind: "create"` branch (repo-only, no
+triggering object). 94 unit tests green; e2e pending.
+
 **Sequencing (confirmed 2026-07-20): do §3.1 + §4.1 first, then §2.** §3.1 (flag parsing for
 `target`/`target-repo`/`allowed`/`blocked`/`max`, the `MCP_STATE_DIR` op-counter, footer) and §4.1 (the
 reject/transform sanitize pipeline) are **cross-cutting infrastructure**, not per-op work. Build them
