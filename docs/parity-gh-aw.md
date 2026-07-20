@@ -7,9 +7,10 @@ commitment — it's a map of the gaps.
 
 - **Our surface:** 4 operations — `add-labels`, `add-comment`, `update-issue`, `create-pull-request`.
 - **gh-aw surface:** ~45 safe-output types.
-- **Snapshot date:** 2026-07-19. gh-aw refs are from its default branch (safe-outputs spec v1.26.0,
-  `pkg/workflow/safe_output_handlers.go`, `safe_outputs_config_types.go`,
-  `docs/.../safe-outputs-specification.md`). gh-aw evolves quickly; re-verify before acting.
+- **Snapshot date:** 2026-07-19 (inventory); direction/decisions added 2026-07-20. gh-aw refs are from
+  its default branch (safe-outputs spec v1.26.0, `pkg/workflow/safe_output_handlers.go`,
+  `safe_outputs_config_types.go`, `docs/.../safe-outputs-specification.md`). gh-aw evolves quickly;
+  re-verify before acting.
 
 > **Framing:** the biggest differences are (1) **breadth** (4 ops vs ~45) and (2) **content
 > sanitization depth**. Architecturally we're aligned (the agent never holds a write token). Our
@@ -26,7 +27,7 @@ commitment — it's a map of the gaps.
 | Transport | MCP gateway (container) → **NDJSON artifact** → download in a processor job | Host-side MCP server, invoked **inline per call** by the harness |
 | Enforcement points | **Dual** (MCP gateway + processor job) | Single (host-side server) |
 | Preview | **`staged`** mode (dry-run: render instead of write) | ❌ none |
-| Threat scan | **LLM threat-detection** pass before writes (warn/abort per type) | ❌ none |
+| Threat scan | **LLM threat-detection** pass before writes — a second model classifies the proposed outputs and either **warns** (annotates reviewable types: comments/issues) or **aborts** (destructive types: close/merge/label) | ❌ none (worth considering; see §7) |
 | Integrity | Frontmatter **SHA-256** policy hash re-verified at exec | N/A (config is host-side, not agent-reachable) |
 
 **Our edge:** hardware microVM + gateway-enforced egress + the write target is **hardcoded to the
@@ -73,15 +74,16 @@ gh-aw per-type options we **don't** have:
 
 | gh-aw option | What it does | Note for us |
 |---|---|---|
-| `target` (`triggering` / `*` / explicit number / expr) | Which object to act on | We hardcode **triggering** (a deliberate least-privilege default). `*`/explicit could be opt-in. |
-| `target-repo` + `allowed-repos` | **Cross-repo** writes with an allowlist | We're single-repo (triggering) only. |
-| `max` (per type, op-count) | Cap number of ops of a type | We cap labels/links **per call**, not an op-count. |
+| `target` (`triggering` / `*` / explicit number / expr) | Which object to act on | We hardcode **triggering** (a deliberate least-privilege default). `*`/explicit could be an author opt-in flag (never agent-settable). |
+| `target-repo` + `allowed-repos` | **Cross-repo** writes with an allowlist | We're single-repo (triggering) only. **Decision:** we can add these as **author-supplied flags**, but the **default must stay "the object from the event payload"** — widening scope is always an explicit opt-in, never agent-reachable. |
+| `max` (per type, op-count) | Cap **how many times** the agent may invoke that op in a run (e.g. create ≤1 issue, ≤3 label calls) | **Not the same as our `--max`**, which caps labels/links **per single call** — the agent could still call the tool many times. A run-wide op-count needs external state (see §5), since microvm-agent spawns a fresh `safe-outputs <op>` process per call. |
 | `title-prefix` | Prepend to every issue/PR title | — |
 | `labels` (auto-apply) | Labels added to every created issue/PR | We only have `allowed-labels` on `add-labels`. |
 | `assignees`, `reviewers` | Auto-assign | — |
 | `staged` | Preview/dry-run | See §1. |
 | `footer` / `messages.*` | Footer + templated status messages | — |
-| `github-token` / `github-app` per handler | Per-handler credentials, App-minted tokens | We use one host-side token. |
+| `github-token` per handler | Per-handler credential | **We already have this** — each safe-output MCP server is added with its own `env: { GITHUB_TOKEN: ... }` in `mcp-config`, and `createGitHubClient` uses exactly that (`src/github.js:16`). **Not a gap.** |
+| `github-app` per handler | Mint a short-lived **installation** token from an App id + private key | **Not a gap for us** — this is what the composable [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token) action already does. A customer runs it in their workflow YAML and passes the resulting token into the MCP server's `env` block. No need to build App-minting into safe-outputs. |
 
 ---
 
@@ -110,6 +112,22 @@ content sanitization still matters. What each side does:
 - **Configurable @mention allowlists** (collaborators / teams / event context). We neutralize *all*
   mentions (simpler; arguably a safer default, but less flexible).
 
+### 4.1 When sanitization runs — and why our model can *reject* instead of transform
+
+- **gh-aw runs it at BOTH ends:** synchronously at the MCP gateway (tool-call time → the model gets
+  immediate feedback) **and** in the async processor job (defense-in-depth, after the agent process is
+  gone). Because the processor runs when the **agent no longer exists**, it can't ask the agent to fix
+  anything, so there it **transforms** (redacts URLs, neutralizes mentions) rather than rejecting.
+- **We run fully inline and synchronous:** the agent's `tools/call` blocks on our host-side response,
+  so we **can return an actionable error and the agent self-corrects on its next turn**. That's an
+  advantage of the inline model. Direction:
+  - **Reject** (return `isError` with a fix hint) for policy violations the agent *should* fix:
+    disallowed URL domain, too many links/mentions, oversized body, disallowed label.
+  - **Transform silently** only for harmless normalizations where a reject would be pointless noise:
+    control-char strip, CRLF→LF, Unicode NFC / zero-width removal, `<script>`/HTML stripping.
+  - **@mentions** are the judgment call: reject ("remove or code-quote the @mention") is cleaner and
+    more transparent than silently backtick-wrapping, but chattier. Undecided — lean reject.
+
 ---
 
 ## 5. Validation
@@ -119,8 +137,12 @@ content sanitization still matters. What each side does:
   gateway (immediate model feedback) and the processor (defense in depth).
 - Us: JSON-schema validation (shape, `required`, `additionalProperties:false`, `minProperties`) at
   tool-call time + host-side apply; per-call caps (`--max`, `--max-links`); target bound from event
-  context. No op-count cap, no cross-repo allowlist, single enforcement point (adequate given our
-  isolation model).
+  context. No **run-wide op-count** cap, no cross-repo allowlist, single enforcement point (adequate
+  given our isolation model).
+- **Op-count wrinkle:** our server is invoked as a fresh `safe-outputs <op>` process **per call**
+  (stateless), so a run-wide "at most N `create_issue` calls" needs **external state** — e.g. a small
+  counter file under `RUNNER_TEMP` that each invocation increments + checks (author-supplied cap on the
+  command line, like `--max`). Cheap; most worth it for destructive ops, least for idempotent ones.
 
 ---
 
@@ -129,21 +151,42 @@ content sanitization still matters. What each side does:
 **P0 — cheap, high value**
 - Add `create-issue` (most-used) and `missing-tool` (agent signals a missing capability).
 - Sanitization hardening that matters even in our model: **zero-width/Unicode NFC**, **HTML/script
-  tag stripping**, **truncation marker**.
+  tag stripping**, **truncation marker**; move to **reject-inline** for policy violations (§4.1).
 
 **P1**
 - `remove-labels`, `close-issue`, `create-discussion`.
-- Opt-in **URL domain allow-listing** + protocol filter.
+- Opt-in **URL domain allow-listing** + protocol filter (reject on violation).
 - **`staged`/preview** (dry-run: log instead of write).
-- Per-type **max op-count** enforcement.
+- Run-wide **op-count** enforcement (§5 external-state approach).
 
 **P2 — heavier / niche**
-- Cross-repo (`target-repo`/`allowed-repos`), `target:*`/explicit number, `title-prefix`/auto-`labels`/
-  `assignees`, `push-to-pull-request-branch`, PR review flow, projects, dispatch, `merge-pull-request`.
+- Cross-repo (`target-repo`/`allowed-repos`) + `target:*`/explicit number — **as author-supplied flags,
+  default stays triggering-object-only**; `title-prefix`/auto-`labels`/`assignees`,
+  `push-to-pull-request-branch`, PR review flow, projects, dispatch, `merge-pull-request`.
+- **LLM threat-detection** pass (a second-model safety net over proposed outputs) — heavier; less
+  critical for us given isolation, but would catch an agent laundering malicious text through a write.
+
+**Explicitly NOT gaps (resolved in discussion 2026-07-20)**
+- **Per-handler token:** already supported via each MCP server's `env: { GITHUB_TOKEN }` (§3).
+- **App-minted tokens:** obtained by composing `actions/create-github-app-token` in the workflow YAML
+  and passing the result into the server's `env` — nothing to build into safe-outputs (§3).
 
 ---
 
-## 7. Where we're deliberately different (our strengths)
+## 7. Direction / decisions (from the 2026-07-20 walkthrough)
+
+- **Safe default is sacred:** every op stays bound to the **object in the event payload** by default;
+  the target is never in the agent-visible schema. Scope-widening (`target`, `target-repo`,
+  `allowed-repos`) is added only as **author-supplied flags** (like `--allowed-labels`/`--max` today).
+- **Prefer reject over transform** for policy violations — our inline/synchronous model lets the agent
+  self-correct, which gh-aw's async processor can't. Keep silent transforms only for harmless
+  normalizations (§4.1).
+- **Per-handler tokens are done; App-minting is a composition concern**, not a safe-outputs feature.
+- **Op-count** limits are worthwhile but need an external counter (§5) because we run stateless per call.
+
+---
+
+## 8. Where we're deliberately different (our strengths)
 
 - **Stronger isolation:** the agent runs in a hardware-virtualized microVM with **no credentials**
   and gateway-enforced egress; gh-aw relies on a read-only token + OS sandbox.
