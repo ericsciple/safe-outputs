@@ -68,18 +68,19 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 > already proven by the discussion ops.
 >
 > **The Class C data path — BUILT + PROVEN (2.4).** Design as agreed: guest git detects the change,
-> host applies it via GraphQL `createCommitOnBranch`. **End-to-end verified** (2.4, later reworked in 2.5).
-> Implementation (as of the **2.5 rework** — create-pull-request is a *plain MCP tool*, no special guest
-> helper):
-> 1. **Agent side** — invokes it like any other safe output via its shim, passing the changed paths:
->    `"$MV_MCP_DIR/create_pull_request" --title "…" --body "…" --add <path> [--add <path>] [--delete <path>] [--draft false]`.
->    The agent already knows what it changed, so it lists paths (no `git` needed). *(Opt-in `--add-all`
->    git-detect is a future add.)*
-> 2. **Generic shim capability** (harness, `generateServerShim`) — **not** create-pull-request-specific: in
->    flag mode, `--add <path>` reads the file from `$GITHUB_WORKSPACE` (paths sandboxed, no `..`/absolute),
->    base64s it into `additions[]`; `--delete <path>` → `deletions[]`; `--k v` → scalar. Contents ride the
->    POST **body** (stdin), never argv (ARG_MAX). Single-tool servers may omit the tool name (host infers).
->    This flows through the **existing dispatch channel** — the guest still holds no token.
+> host applies it via GraphQL `createCommitOnBranch`. **End-to-end verified** (evolved through 2.4→2.7;
+> see history at the end of this block).
+> Implementation (current, as of the **2.7 redesign** — create-pull-request is a *plain MCP tool* called
+> through a pure-passthrough shim, no file logic anywhere in the harness):
+> 1. **Agent side** — discovers the tool via `"$MV_MCP_DIR/__tools_list"`, reads its input schema, then
+>    calls it with JSON arguments that match the schema. For file changes it fills the tool's own
+>    `additions`/`deletions` fields itself: it reads each changed file from `$GITHUB_WORKSPACE`,
+>    base64-encodes the contents, and passes the JSON on stdin:
+>    `printf '%s' "$JSON" | "$MV_MCP_DIR/create_pull_request" create_pull_request --stdin`.
+> 2. **Shim = pure passthrough** (harness, `generateServerShim`): it forwards the JSON arguments object to
+>    the gateway and nothing else — no `--add`/`--delete`, no file reading, no base64, no arg translation.
+>    (`additions`/`deletions` are just this tool's schema fields, mirroring GitHub's `createCommitOnBranch`;
+>    the harness knows nothing about "files".) The guest still holds no token.
 > 3. **Host side** (safe-output server, real token): resolve base = repo default branch + its tip SHA →
 >    `POST /git/refs` create `refs/heads/<generated-branch>` at that tip → GraphQL **`createCommitOnBranch`**
 >    (`fileChanges: { additions:[{path, contents(base64)}], deletions:[{path}] }`, `expectedHeadOid` = base
@@ -87,11 +88,12 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 >    tip. `push-to-pull-request-branch` = the same minus the final `/pulls` (commits onto the triggering PR's
 >    head).
 >
-> **Why the rework (2.5):** the first cut (2.4) shipped an agent-facing `/__rt/helpers/create-pull-request`
-> script that did guest git detection and bypassed the MCP model — special-casing one safe output in the
-> infra layer. Corrected: create-pull-request is now a normal MCP tool; the guest-side file plumbing is a
-> **generic** shim capability (`--add`/`--delete`), so nothing is special-cased and the harness stays
-> decoupled from safe-outputs.
+> **History (each step removed a special-case):** 2.4 shipped an agent-facing
+> `/__rt/helpers/create-pull-request` script that did guest git detection and bypassed the MCP model. 2.5
+> made create-pull-request a normal MCP tool but moved the file plumbing into a *generic* shim capability
+> (`--add`/`--delete` reading workspace files). 2.7 removed even that — `--add`/`--delete` was non-MCP logic
+> baked into the generic shim, so it was deleted; shims are now pure passthrough and the agent produces file
+> bytes per the tool's schema. (See `microvm-agent/docs/design-principles.md` #7.)
 >
 > **gh-aw parity for the two open decisions (verified in `create_pull_request.cjs`):**
 > - **Branch name = harness-generated.** gh-aw auto-generates `<workflowId>-<randomHex>`; optional

@@ -44,12 +44,16 @@ labels", "open a PR with this body"); it never chooses the target. These run hos
    block and uses it host-side. The token is never written into anything the guest reads.
    (This is the safe-outputs half of the harness's "no credential in the guest" invariant.)
 
-6. **File-changing outputs use the `additions`/`deletions` schema contract.** `create-pull-request`
-   / `push-to-pull-request-branch` take whole-file `additions:[{path,contents(base64)}]`
-   and `deletions:[{path}]` and commit them via GraphQL `createCommitOnBranch` (one signed
-   commit). The caller (agent) provides the file bytes per the schema; the server does not
-   reach into any workspace. Branch is generated host-side; base is the repo default
-   branch. (`src/changeset.js`, `src/operations/create-pull-request.js`.)
+6. **File-changing outputs are ordinary MCP tools; the agent supplies the bytes.**
+   `create-pull-request` / `push-to-pull-request-branch` are normal tools whose own input
+   schema happens to declare whole-file changes — `additions: [{path, contents(base64)}]`
+   and `deletions: [{path}]` (those field names just mirror GitHub's GraphQL
+   `createCommitOnBranch`; they are **this tool's schema, not a framework concept** — any
+   tool shapes its own inputs). The **agent** provides the file contents per the schema;
+   the server never reaches into a workspace. The server commits them via
+   `createCommitOnBranch` (one signed commit); the branch is generated host-side and the
+   base is the repo default branch (per #2). (`src/changeset.js`,
+   `src/operations/create-pull-request.js`.)
 
 7. **Zero runtime dependencies.** The servers use only built-ins (`fetch`, `node:test`,
    stdio). Adding a runtime dependency is a deliberate decision, not a convenience.
