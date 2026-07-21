@@ -5,7 +5,9 @@ A feature-by-feature comparison of this repo's safe outputs against
 recorded so we can decide **one item at a time** what's worth adopting. Nothing here is a
 commitment — it's a map of the gaps.
 
-- **Our surface:** 4 operations — `add-labels`, `add-comment`, `update-issue`, `create-pull-request`.
+- **Our surface:** 4 operations — `add-labels`, `add-comment`, `update-issue`, `create-pull-request`
+  (note: `create-pull-request` is coded but **not yet functional end-to-end** — it needs the guest→host
+  file-change path that doesn't exist yet; see §2.0 Class C).
 - **gh-aw surface:** ~45 safe-output types.
 - **Snapshot date:** 2026-07-19 (inventory); direction/decisions added 2026-07-20. gh-aw refs are from
   its default branch (safe-outputs spec v1.26.0, `pkg/workflow/safe_output_handlers.go`,
@@ -44,12 +46,40 @@ relies on a read-only token + OS sandbox.
 
 We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 
+> ### 2.0 Portability assessment (2026-07-20) — can we truly port gh-aw safe outputs here?
+>
+> **Short answer: yes for ~35 of ~45, and it's *proven*; one architectural piece is unproven.** We
+> deliberately ported a *representative cross-section* (8 ops + the harness signals) that exercises every
+> **distinct porting mechanism**, rather than grinding through many near-identical REST calls. What each
+> class needs and whether it's proven:
+>
+> | Class | Examples | Needs | Status |
+> |---|---|---|---|
+> | **A — REST, target bound host-side** | merge/update/close-PR, dispatch-workflow, assign-*, add-reviewer, PR-review-flow | nothing new | ✅ **proven** by the 8 shipped |
+> | **B — GraphQL-only** | projects, sub-issues, hide-comment, update/close-discussion, issue-type/field | the `graphql()` client | ✅ **proven** (create-discussion; ~40 LOC, no new dep) |
+> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | a way to move agent-produced **bytes** out of the discarded guest overlay | ⚠️ **UNPROVEN — the one real gap (see below)** |
+> | **D — needs special runner creds** | `upload-artifact` (`ACTIONS_RUNTIME_TOKEN`), `create-check-run` (checks:write) | host-side wiring | 🔧 host has them; wiring only |
+> | **E — gh-aw constructs, not GitHub writes** | `staged`/preview, `comment-memory`, `create-agent-session`, threat-detection | design, not an API port | signals DONE (2.2); rest is policy |
+>
+> **The one unproven piece — file-changing outputs have no guest→host data path yet.** The workspace is
+> mounted **read-only lower + throwaway tmpfs overlay**, so **every file the agent writes in the guest is
+> discarded** (`microvm-agent/src/guest-assets.js`). `create-pull-request`'s code is correct but assumes
+> *"the harness commits the agent's changes to a branch and sets `GITHUB_HEAD_BRANCH`"* — and **nothing in
+> the harness does that** (no git commit/push, no branch prep, `GITHUB_HEAD_BRANCH` never set). So
+> `create-pull-request` would hard-fail at `requirePullRequestContext`; it has never been exercised (the
+> e2e only does `add-labels`, a metadata write with no bytes). This is **not a blocker in principle**
+> (capture the overlay `upperdir`, or add a "collect" channel, then commit+push / upload host-side) but it
+> is **real, unbuilt, and shared by every Class-C output**. **Proving Class C is the gate to declaring full
+> parity** — it should be the next milestone. Everything else is either proven or mechanical repetition of
+> a proven path.
+
+
 **High-value, common — strong candidates:**
 - [x] `create-issue` — arguably the single most-used safe output. **Implemented (2.1).**
 - [x] `create-discussion` — **implemented (2.1).**
 - [x] `close-issue` — **implemented (2.1).**
 - [x] `remove-labels` — **implemented (2.1).**
-- [ ] `push-to-pull-request-branch` — not implemented.
+- [ ] `push-to-pull-request-branch` — not implemented (**Class C — needs the guest→host data path; see §2.0**).
 
 **System "signals" in gh-aw — NOT safe outputs for us (harness concern, out of scope here):**
 - [x] `missing-tool`, `missing-data`, `report-incomplete`, `noop` aren't GitHub writes — they're the agent
@@ -418,6 +448,10 @@ safe everywhere and apply throughout.
 - [x] Sanitization hardening (transforms): **zero-width/Unicode NFC**, **HTML/script stripping**, and move
   policy checks to **reject-inline** per the locked §4.1 split (reject oversize/bad-domain/over-limit/
   disallowed-label; no silent truncation). *(XML-comment removal + code-fence balancing still deferred — §4.1.)*
+- [ ] **Guest→host file-change path (Class C gate — see §2.0).** Capture agent-produced bytes out of the
+  discarded workspace overlay and apply host-side (commit+push a branch; upload a file). **Unblocks
+  `create-pull-request` (currently non-functional), `push-to-pull-request-branch`, `upload-asset`,
+  `upload-artifact`.** This is the single architectural piece gating full parity — prove it next.
 
 **P1**
 - [x] `remove-labels`, `close-issue`, `create-discussion`.
