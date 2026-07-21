@@ -18,6 +18,7 @@ import markReady from "../src/operations/mark-pull-request-ready-for-review.js";
 import resolveThread from "../src/operations/resolve-pull-request-review-thread.js";
 import updateDiscussion from "../src/operations/update-discussion.js";
 import closeDiscussion from "../src/operations/close-discussion.js";
+import pushToBranch from "../src/operations/push-to-pull-request-branch.js";
 
 const NOF = { noFooter: true };
 const prCtx = { owner: "octo", repo: "repo", issueNumber: 7 };
@@ -287,4 +288,36 @@ test("close-discussion resolves the number then closes with a reason", async () 
   await closeDiscussion.apply({ discussion_number: 3, reason: "OUTDATED" }, repoCtx, gh);
   assert.equal(gh.calls[1].vars.id, "D1");
   assert.equal(gh.calls[1].vars.reason, "OUTDATED");
+});
+
+// ---- push-to-pull-request-branch (Class C) ----
+test("push-to-pull-request-branch resolves the PR head then commits via GraphQL", async () => {
+  const gql = [];
+  const gh = {
+    calls: [],
+    async request(method, path) {
+      this.calls.push({ method, path });
+      if (method === "GET" && /\/pulls\/7$/.test(path)) return { head: { ref: "agent/x", sha: "headoid1" } };
+      return {};
+    },
+    async graphql(query, vars) {
+      gql.push({ query, vars });
+      return { createCommitOnBranch: { commit: { oid: "new", url: "u" } } };
+    },
+  };
+  const out = await pushToBranch.apply(
+    { message: "more", additions: [{ path: "b.txt", contents: "eA==" }] },
+    prCtx,
+    gh
+  );
+  assert.match(gql[0].query, /createCommitOnBranch/);
+  assert.equal(gql[0].vars.input.branch.branchName, "agent/x");
+  assert.equal(gql[0].vars.input.expectedHeadOid, "headoid1");
+  assert.deepEqual(gql[0].vars.input.fileChanges.additions, [{ path: "b.txt", contents: "eA==" }]);
+  assert.match(out, /Pushed a commit to agent\/x/);
+});
+
+test("push-to-pull-request-branch rejects an empty change set", async () => {
+  const gh = { async request() { return { head: { ref: "b", sha: "s" } }; }, async graphql() {} };
+  await assert.rejects(() => pushToBranch.apply({ message: "m" }, prCtx, gh), /nothing to commit/);
 });

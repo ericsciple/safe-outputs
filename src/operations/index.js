@@ -12,6 +12,7 @@ import createDiscussion from "./create-discussion.js";
 import updateDiscussion from "./update-discussion.js";
 import closeDiscussion from "./close-discussion.js";
 import createPullRequest from "./create-pull-request.js";
+import pushToPullRequestBranch from "./push-to-pull-request-branch.js";
 import updatePullRequest from "./update-pull-request.js";
 import closePullRequest from "./close-pull-request.js";
 import mergePullRequest from "./merge-pull-request.js";
@@ -39,6 +40,7 @@ export const operations = {
   [updateDiscussion.id]: updateDiscussion,
   [closeDiscussion.id]: closeDiscussion,
   [createPullRequest.id]: createPullRequest,
+  [pushToPullRequestBranch.id]: pushToPullRequestBranch,
   [updatePullRequest.id]: updatePullRequest,
   [closePullRequest.id]: closePullRequest,
   [mergePullRequest.id]: mergePullRequest,

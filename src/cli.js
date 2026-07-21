@@ -13,7 +13,7 @@
 import { getOperation, operationIds } from "./operations/index.js";
 import { createMcpServer } from "./mcp.js";
 import { serve } from "./serve.js";
-import { loadContext, requireIssueContext, requirePullRequestContext } from "./context.js";
+import { loadContext, requireIssueContext } from "./context.js";
 import { createGitHubClient } from "./github.js";
 import { parseConfig } from "./config.js";
 import { claimCall } from "./limits.js";
@@ -92,14 +92,10 @@ function main(argv = process.argv) {
  * author-supplied only.
  */
 function resolveContext(operation, raw, config, args) {
-  if (operation.targetKind === "pull-request") {
-    const ctx = requirePullRequestContext(raw);
-    const { owner, repo } = resolveRepo(ctx, config);
-    return { ...ctx, owner, repo };
-  }
   if (operation.targetKind === "create") {
-    // Creation ops (create-issue, create-discussion) need a repo but no triggering
-    // object. Default = the current repo; --target-repo widens it (allow-listed).
+    // Creation ops (create-issue, create-discussion, create-pull-request, dispatch-*)
+    // need a repo but no triggering object. Default = the current repo; --target-repo
+    // widens it (allow-listed).
     const { owner, repo } = resolveRepo(raw, config);
     return { ...raw, owner, repo };
   }

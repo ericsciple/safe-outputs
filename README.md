@@ -78,7 +78,8 @@ host-side (see Design), so the agent never sees it.
 | `update-discussion` | `update_discussion` | `discussion_number`, `title?`, `body?` | Edit a discussion's title/body (GraphQL) |
 | `close-discussion` | `close_discussion` | `discussion_number`, `reason?` | Close a discussion (GraphQL) |
 | `hide-comment` | `hide_comment` | `comment_id` (node id), `reason?` | Minimize/hide a comment (GraphQL) |
-| `create-pull-request` | `create_pull_request` | `title`, `body`, `draft?` | Open a PR from the harness-prepared branch |
+| `create-pull-request` | `create_pull_request` | `title`, `body`, `base_sha`, `additions[]`, `deletions[]`, `draft?` | Open a PR from a set of file changes (commits them host-side, signed) |
+| `push-to-pull-request-branch` | `push_to_pull_request_branch` | `message`, `additions[]`, `deletions[]` | Commit file changes onto the triggering PR's branch (signed) |
 | `update-pull-request` | `update_pull_request` | `title?`, `body?`, `state?` (≥1) | Edit the triggering PR's title/body/state |
 | `close-pull-request` | `close_pull_request` | `body?` | Close (without merging) the triggering PR |
 | `merge-pull-request` | `merge_pull_request` | `merge_method?`, `commit_title?`, `commit_message?` | Merge the triggering PR |
@@ -91,8 +92,8 @@ host-side (see Design), so the agent never sees it.
 | `dispatch-repository` | `dispatch_repository` | `event_type`, `client_payload?` | Fire an allow-listed `repository_dispatch` event |
 
 Every tool schema exposes only the *intent*. The target — which issue/PR, which repo, and (for
-`create-pull-request`) which head/base branch — is bound host-side from the environment, never
-from an agent argument.
+`create-pull-request`) the generated head branch + base branch — is bound host-side, never from an
+agent argument.
 
 ## Scope-widening flags
 
@@ -119,6 +120,8 @@ safe-outputs add-comment --max-links 10 --no-footer
 | `--labels a,b` | `create-issue`, `create-pull-request` | Author-set labels always applied to the new issue/PR |
 | `--assignees u1,u2` | `create-issue` | Auto-assign the new issue |
 | `--reviewers u1,u2` | `create-pull-request` | Request reviewers on the new PR |
+| `--branch-prefix <s>` | `create-pull-request` | Prefix for the generated head branch (e.g. `agent-`) |
+| `--base-branch <b>` | `create-pull-request` | Target branch for the PR (default: the repo's default branch) |
 | `--title-prefix "<s>"` | `create-issue`, `create-discussion` | Prefix the agent's title (e.g. `"[bot] "`) |
 | `--category name` | `create-discussion` | Pin the discussion category (else the workflow's default / first) |
 | `--allow-body true\|false` | `close-issue`, `close-pull-request` | Allow an agent-supplied closing comment (default `true`) |
@@ -151,10 +154,8 @@ are tracked as future work in `docs/parity-gh-aw.md` §4.1.)
   (like any MCP server secret); held host-side.
 - `GITHUB_EVENT_PATH` — path to the event payload JSON (provided by Actions).
 - `GITHUB_REPOSITORY` — `owner/repo` (provided by Actions; falls back to the payload).
-- `GITHUB_HEAD_BRANCH` — for `create-pull-request`: the branch holding the agent's committed
-  changes (set by the harness).
-- `GITHUB_BASE_BRANCH` — for `create-pull-request`: the branch the PR should target.
-- `GITHUB_API_URL` — optional, for GitHub Enterprise Server.
+- `GITHUB_WORKFLOW` — used to name the generated head branch for `create-pull-request`.
+- `GITHUB_API_URL` / `GITHUB_GRAPHQL_URL` — optional, for GitHub Enterprise Server.
 
 ## Packaging
 

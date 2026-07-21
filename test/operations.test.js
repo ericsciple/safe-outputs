@@ -121,39 +121,94 @@ test("update-issue: PATCHes the bound issue with sanitized, changed fields only"
   assert.match(summary, /octo\/repo#42/);
 });
 
-test("create-pull-request: schema exposes title/body/draft only, never the branches", () => {
+test("create-pull-request: schema exposes title/body/draft + the change set, never the branch", () => {
   const props = Object.keys(createPullRequest.inputSchema.properties);
-  assert.deepEqual(props.sort(), ["body", "draft", "title"]);
+  assert.deepEqual(props.sort(), ["additions", "base_sha", "body", "deletions", "draft", "title"]);
   assert.equal(createPullRequest.inputSchema.additionalProperties, false);
   assert.ok(!props.includes("head"));
   assert.ok(!props.includes("base"));
   assert.ok(!props.includes("repo"));
 });
 
-test("create-pull-request: binds head/base from context and defaults to draft", async () => {
-  const gh = fakeGitHub({ html_url: "https://github.com/octo/repo/pull/7" });
+test("create-pull-request: creates branch@base_sha, commits via GraphQL, opens the PR to the default branch", async () => {
+  const gql = [];
+  const gh = {
+    calls: [],
+    async request(method, path, body) {
+      this.calls.push({ method, path, body });
+      if (method === "GET" && path === "/repos/octo/repo") return { default_branch: "main" };
+      if (path === "/repos/octo/repo/pulls") return { number: 7, html_url: "https://github.com/octo/repo/pull/7" };
+      return {};
+    },
+    async graphql(query, vars) {
+      gql.push({ query, vars });
+      return { createCommitOnBranch: { commit: { oid: "deadbeef", url: "u" } } };
+    },
+  };
   const summary = await createPullRequest.apply(
-    { title: "Fix it", body: "Details ping @octocat" },
-    prCtx,
+    {
+      title: "Fix it",
+      body: "Details ping @octocat",
+      base_sha: "abc1234",
+      additions: [{ path: "a.txt", contents: "aGk=" }],
+    },
+    { owner: "octo", repo: "repo" },
     gh,
     { noFooter: true }
   );
-  assert.deepEqual(gh.calls[0], {
-    method: "POST",
-    path: "/repos/octo/repo/pulls",
-    body: {
-      title: "Fix it",
-      body: "Details ping `@octocat`",
-      head: "agent/work",
-      base: "main",
-      draft: true,
-    },
-  });
+
+  // A branch ref was created at base_sha.
+  const ref = gh.calls.find((c) => c.path === "/repos/octo/repo/git/refs");
+  assert.ok(ref, "created a branch ref");
+  assert.match(ref.body.ref, /^refs\/heads\//);
+  assert.equal(ref.body.sha, "abc1234");
+
+  // The commit went through createCommitOnBranch with the base_sha as expectedHeadOid.
+  assert.equal(gql.length, 1);
+  assert.match(gql[0].query, /createCommitOnBranch/);
+  assert.equal(gql[0].vars.input.expectedHeadOid, "abc1234");
+  assert.deepEqual(gql[0].vars.input.fileChanges.additions, [{ path: "a.txt", contents: "aGk=" }]);
+  // The branch name in the ref and the commit match.
+  assert.equal(gql[0].vars.input.branch.branchName, ref.body.ref.replace("refs/heads/", ""));
+
+  // The PR opened against the resolved default branch, drafting by default.
+  const pr = gh.calls.find((c) => c.path === "/repos/octo/repo/pulls");
+  assert.equal(pr.body.base, "main");
+  assert.equal(pr.body.head, ref.body.ref.replace("refs/heads/", ""));
+  assert.equal(pr.body.draft, true);
+  assert.equal(pr.body.body, "Details ping `@octocat`"); // sanitized
   assert.match(summary, /pull\/7/);
 });
 
-test("create-pull-request: honors an explicit draft: false", async () => {
-  const gh = fakeGitHub({ html_url: "https://github.com/octo/repo/pull/8" });
-  await createPullRequest.apply({ title: "Fix", body: "b", draft: false }, prCtx, gh);
-  assert.equal(gh.calls[0].body.draft, false);
+test("create-pull-request: honors --base-branch and explicit draft:false", async () => {
+  const gh = {
+    calls: [],
+    async request(method, path, body) {
+      this.calls.push({ method, path, body });
+      if (path === "/repos/octo/repo/pulls") return { number: 8, html_url: "https://x/pull/8" };
+      return {};
+    },
+    async graphql() {
+      return { createCommitOnBranch: { commit: { oid: "c" } } };
+    },
+  };
+  await createPullRequest.apply(
+    { title: "Fix", body: "b", base_sha: "abc1234", draft: false, additions: [{ path: "f", contents: "eA==" }] },
+    { owner: "octo", repo: "repo" },
+    gh,
+    { noFooter: true, baseBranch: "develop" }
+  );
+  const pr = gh.calls.find((c) => c.path === "/repos/octo/repo/pulls");
+  assert.equal(pr.body.base, "develop");
+  assert.equal(pr.body.draft, false);
+  // With --base-branch set, we do NOT GET the repo default branch.
+  assert.ok(!gh.calls.some((c) => c.method === "GET" && c.path === "/repos/octo/repo"));
+});
+
+test("create-pull-request: rejects an empty change set", async () => {
+  const gh = { async request() {}, async graphql() {} };
+  await assert.rejects(
+    () => createPullRequest.apply({ title: "t", body: "b", base_sha: "abc1234" }, { owner: "o", repo: "r" }, gh, {}),
+    /nothing to commit/
+  );
 });
