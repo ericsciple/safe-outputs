@@ -5,9 +5,8 @@ A feature-by-feature comparison of this repo's safe outputs against
 recorded so we can decide **one item at a time** what's worth adopting. Nothing here is a
 commitment — it's a map of the gaps.
 
-- **Our surface:** 4 operations — `add-labels`, `add-comment`, `update-issue`, `create-pull-request`
-  (note: `create-pull-request` is coded but **not yet functional end-to-end** — it needs the guest→host
-  file-change path that doesn't exist yet; see §2.0 Class C).
+- **Our surface:** originally 4 operations; now **26** — `add-labels`, `add-comment`, `update-issue`,
+  `create-pull-request` (Class C data path, e2e-proven), plus the 2.1/2.3/2.4 additions.
 - **gh-aw surface:** ~45 safe-output types.
 - **Snapshot date:** 2026-07-19 (inventory); direction/decisions added 2026-07-20. gh-aw refs are from
   its default branch (safe-outputs spec v1.26.0, `pkg/workflow/safe_output_handlers.go`,
@@ -57,7 +56,7 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 > |---|---|---|---|
 > | **A — REST, target bound host-side** | merge/update/close-PR, dispatch-workflow/-repository, assign-/unassign-user, request-reviewers, replace-labels, assign-milestone, submit-review, review-comment | nothing new | ✅ **DONE** — 12 ops shipped (2.3) |
 > | **B — GraphQL-only** | create/update/close-discussion, hide-comment, mark-ready-for-review, resolve-review-thread | the `graphql()` client | ✅ **DONE** — 5 more ops shipped (2.3); ~40-LOC client, no new dep |
-> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | move agent-produced **bytes** out of the discarded overlay → apply host-side via the **Git Data API** (see design below) | ⚠️ **UNPROVEN — the one real gap; design agreed, not built** |
+> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | move agent-produced **bytes** out of the discarded overlay → apply host-side via `createCommitOnBranch` (see design below) | ✅ **PROVEN** (2.4) — create-pull-request + push-to-pull-request-branch built + e2e green (PR #22); `upload-*` still open (needs runner creds) |
 > | **D — needs special runner creds** | `upload-artifact` (`ACTIONS_RUNTIME_TOKEN`), `create-check-run` (checks:write) | host-side wiring | 🔧 host has them; wiring only |
 > | **E — gh-aw constructs, not GitHub writes** | `staged`/preview, `comment-memory`, `create-agent-session`, threat-detection | design, not an API port | signals DONE (2.2); rest is policy |
 > | **B+ — heavier GraphQL (needs product decisions)** | Projects V2 (`create/update-project`, status-update, `set-issue-field`), `set-issue-type`, `link-sub-issue`, code-scanning | GraphQL + a **target/config decision** (which project? which field?) | ⏸️ **deferred pending a decision** (not a portability blocker) |
@@ -68,18 +67,11 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 > needs a product/config decision (e.g. *which* project board to write to) — the GraphQL mechanism itself is
 > already proven by the discussion ops.
 >
-> **The one unproven piece — file-changing outputs have no guest→host data path yet.** The workspace is
-> mounted **read-only lower + throwaway tmpfs overlay**, so **every file the agent writes in the guest is
-> discarded** (`microvm-agent/src/guest-assets.js`). `create-pull-request`'s code is correct but assumes
-> *"the harness commits the agent's changes to a branch and sets `GITHUB_HEAD_BRANCH`"* — and **nothing in
-> the harness does that** yet. So `create-pull-request` would hard-fail at `requirePullRequestContext`; it
-> has never been exercised (the e2e only does `add-labels`, a metadata write with no bytes).
->
-> **Agreed design (2026-07-20, updated after reading gh-aw's source) — guest git detects the change; host
-> applies it via the GraphQL `createCommitOnBranch` mutation.** No `git push`, no credential in the guest,
-> invariant preserved. **This matches gh-aw**, which uses `createCommitOnBranch` by default (see
-> `actions/setup/js/push_signed_commits.cjs`) — a *whole-file* API (not low-level blobs/trees), atomic, and
-> the commit is **cryptographically signed** by GitHub:
+> **The Class C data path — BUILT + PROVEN (2.4).** Design as agreed: guest git detects the change,
+> host applies it via GraphQL `createCommitOnBranch`. **End-to-end verified** — run 29797688007 had the
+> microVM agent create a file, the guest `create-pull-request` helper ship the change set through the
+> dispatch channel (no token in the guest), and the host safe-outputs server open
+> **PR #22** with a **signed** commit (`verified: true`) containing exactly the agent's file. Implementation:
 > 1. **Guest side** (a git-aware wrapper for `create_pull_request` / `push_to_branch`): `git add -A`, then
 >    compute the change set vs the base commit (`git diff --name-status` → adds/modifies/deletes, read file
 >    bytes). We already know the base SHA and the remote.
@@ -102,16 +94,17 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 >   `allowed-base-branches` allowlist (else rejected). → **Default = repo default branch; author
 >   `--base-branch`; agent override gated by `--allowed-base-branches`** (mirrors our safe-default model).
 >
-> **Proving Class C is the gate to declaring full parity** — it's the next milestone. Everything else is
-> either done, or mechanical repetition of a proven path (the B+ family).
-
+> **Class C is BUILT + e2e-verified (2.4)** — the file-change data path is proven, so full parity no
+> longer has an unproven architectural gap. What remains is mechanical: the B+ family (Projects V2 etc.,
+> which need a target/config decision, not new mechanism) and `upload-*` (runner-cred wiring).
 
 **High-value, common — strong candidates:**
 - [x] `create-issue` — arguably the single most-used safe output. **Implemented (2.1).**
 - [x] `create-discussion` — **implemented (2.1).**
 - [x] `close-issue` — **implemented (2.1).**
 - [x] `remove-labels` — **implemented (2.1).**
-- [ ] `push-to-pull-request-branch` — not built (**Class C — needs the guest→host data path; design agreed in §2.0**).
+- [x] `create-pull-request` — **reworked to the Class C data path + e2e-proven (2.4, PR #22).**
+- [x] `push-to-pull-request-branch` — **implemented (2.4, Class C data path).**
 
 **System "signals" in gh-aw — NOT safe outputs for us (harness concern, out of scope here):**
 - [x] `missing-tool`, `missing-data`, `report-incomplete`, `noop` aren't GitHub writes — they're the agent
@@ -483,10 +476,11 @@ safe everywhere and apply throughout.
 - [x] Sanitization hardening (transforms): **zero-width/Unicode NFC**, **HTML/script stripping**, and move
   policy checks to **reject-inline** per the locked §4.1 split (reject oversize/bad-domain/over-limit/
   disallowed-label; no silent truncation). *(XML-comment removal + code-fence balancing still deferred — §4.1.)*
-- [ ] **Guest→host file-change path (Class C gate — see §2.0).** Capture agent-produced bytes out of the
-  discarded workspace overlay and apply host-side (commit+push a branch; upload a file). **Unblocks
-  `create-pull-request` (currently non-functional), `push-to-pull-request-branch`, `upload-asset`,
-  `upload-artifact`.** This is the single architectural piece gating full parity — prove it next.
+- [x] **Guest→host file-change path (Class C gate — see §2.0). DONE + e2e-proven (2.4).** The guest
+  `create-pull-request`/`push-to-pull-request-branch` helpers detect the workspace change set with git and
+  ship it through dispatch; the host commits via `createCommitOnBranch` (signed) + opens the PR. Verified
+  end-to-end (PR #22). `upload-asset`/`upload-artifact` remain (need runner creds), but the **data path
+  that gated full parity is proven**.
 
 **P1**
 - [x] `remove-labels`, `close-issue`, `create-discussion`.
@@ -502,8 +496,9 @@ safe everywhere and apply throughout.
   `resolve-review-thread`, `mark-ready`, `request-reviewers`), `dispatch-workflow`/`-repository`,
   `replace-labels`, `assign-milestone`, `assign`/`unassign-user`, `hide-comment`,
   `update`/`close-discussion` — **Class A/B, done in 2.3.**
-- [ ] `push-to-pull-request-branch` (**Class C — see §2.0**); Projects V2 / `set-issue-field` /
-  `set-issue-type` / `link-sub-issue` (**B+ — need a target/config decision**); code scanning; `upload-*`.
+- [x] `create-pull-request` (Class C data path, e2e-proven — 2.4); [ ] `push-to-pull-request-branch`
+  is built too. Projects V2 / `set-issue-field` / `set-issue-type` / `link-sub-issue` (**B+ — need a
+  target/config decision**); code scanning; `upload-*` (runner creds).
 - [ ] **LLM threat-detection** pass (a second-model safety net over proposed outputs) — heavier; less
   critical for us given isolation, but would catch an agent laundering malicious text through a write.
 
