@@ -78,7 +78,7 @@ host-side (see Design), so the agent never sees it.
 | `update-discussion` | `update_discussion` | `discussion_number`, `title?`, `body?` | Edit a discussion's title/body (GraphQL) |
 | `close-discussion` | `close_discussion` | `discussion_number`, `reason?` | Close a discussion (GraphQL) |
 | `hide-comment` | `hide_comment` | `comment_id` (node id), `reason?` | Minimize/hide a comment (GraphQL) |
-| `create-pull-request` | `create_pull_request` | `title`, `body`, `base_sha`, `additions[]`, `deletions[]`, `draft?` | Open a PR from a set of file changes (commits them host-side, signed) |
+| `create-pull-request` | `create_pull_request` | `title`, `body`, `additions[]`, `deletions[]`, `draft?` | Open a PR from file changes (agent passes `--add <path>`/`--delete <path>`; committed host-side, signed) |
 | `push-to-pull-request-branch` | `push_to_pull_request_branch` | `message`, `additions[]`, `deletions[]` | Commit file changes onto the triggering PR's branch (signed) |
 | `update-pull-request` | `update_pull_request` | `title?`, `body?`, `state?` (≥1) | Edit the triggering PR's title/body/state |
 | `close-pull-request` | `close_pull_request` | `body?` | Close (without merging) the triggering PR |

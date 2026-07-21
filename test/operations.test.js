@@ -123,20 +123,22 @@ test("update-issue: PATCHes the bound issue with sanitized, changed fields only"
 
 test("create-pull-request: schema exposes title/body/draft + the change set, never the branch", () => {
   const props = Object.keys(createPullRequest.inputSchema.properties);
-  assert.deepEqual(props.sort(), ["additions", "base_sha", "body", "deletions", "draft", "title"]);
+  assert.deepEqual(props.sort(), ["additions", "body", "deletions", "draft", "title"]);
   assert.equal(createPullRequest.inputSchema.additionalProperties, false);
   assert.ok(!props.includes("head"));
   assert.ok(!props.includes("base"));
+  assert.ok(!props.includes("base_sha"));
   assert.ok(!props.includes("repo"));
 });
 
-test("create-pull-request: creates branch@base_sha, commits via GraphQL, opens the PR to the default branch", async () => {
+test("create-pull-request: bases on the default branch tip, commits via GraphQL, opens the PR", async () => {
   const gql = [];
   const gh = {
     calls: [],
     async request(method, path, body) {
       this.calls.push({ method, path, body });
       if (method === "GET" && path === "/repos/octo/repo") return { default_branch: "main" };
+      if (method === "GET" && path === "/repos/octo/repo/git/ref/heads/main") return { object: { sha: "basetip1" } };
       if (path === "/repos/octo/repo/pulls") return { number: 7, html_url: "https://github.com/octo/repo/pull/7" };
       return {};
     },
@@ -149,7 +151,6 @@ test("create-pull-request: creates branch@base_sha, commits via GraphQL, opens t
     {
       title: "Fix it",
       body: "Details ping @octocat",
-      base_sha: "abc1234",
       additions: [{ path: "a.txt", contents: "aGk=" }],
     },
     { owner: "octo", repo: "repo" },
@@ -157,18 +158,17 @@ test("create-pull-request: creates branch@base_sha, commits via GraphQL, opens t
     { noFooter: true }
   );
 
-  // A branch ref was created at base_sha.
+  // A branch ref was created at the default-branch tip (guest supplies no base sha).
   const ref = gh.calls.find((c) => c.path === "/repos/octo/repo/git/refs");
   assert.ok(ref, "created a branch ref");
   assert.match(ref.body.ref, /^refs\/heads\//);
-  assert.equal(ref.body.sha, "abc1234");
+  assert.equal(ref.body.sha, "basetip1");
 
-  // The commit went through createCommitOnBranch with the base_sha as expectedHeadOid.
+  // The commit went through createCommitOnBranch with the base tip as expectedHeadOid.
   assert.equal(gql.length, 1);
   assert.match(gql[0].query, /createCommitOnBranch/);
-  assert.equal(gql[0].vars.input.expectedHeadOid, "abc1234");
+  assert.equal(gql[0].vars.input.expectedHeadOid, "basetip1");
   assert.deepEqual(gql[0].vars.input.fileChanges.additions, [{ path: "a.txt", contents: "aGk=" }]);
-  // The branch name in the ref and the commit match.
   assert.equal(gql[0].vars.input.branch.branchName, ref.body.ref.replace("refs/heads/", ""));
 
   // The PR opened against the resolved default branch, drafting by default.
@@ -180,11 +180,12 @@ test("create-pull-request: creates branch@base_sha, commits via GraphQL, opens t
   assert.match(summary, /pull\/7/);
 });
 
-test("create-pull-request: honors --base-branch and explicit draft:false", async () => {
+test("create-pull-request: honors --base-branch and coerces string draft:'false'", async () => {
   const gh = {
     calls: [],
     async request(method, path, body) {
       this.calls.push({ method, path, body });
+      if (method === "GET" && path === "/repos/octo/repo/git/ref/heads/develop") return { object: { sha: "devtip" } };
       if (path === "/repos/octo/repo/pulls") return { number: 8, html_url: "https://x/pull/8" };
       return {};
     },
@@ -193,22 +194,22 @@ test("create-pull-request: honors --base-branch and explicit draft:false", async
     },
   };
   await createPullRequest.apply(
-    { title: "Fix", body: "b", base_sha: "abc1234", draft: false, additions: [{ path: "f", contents: "eA==" }] },
+    { title: "Fix", body: "b", draft: "false", additions: [{ path: "f", contents: "eA==" }] },
     { owner: "octo", repo: "repo" },
     gh,
     { noFooter: true, baseBranch: "develop" }
   );
   const pr = gh.calls.find((c) => c.path === "/repos/octo/repo/pulls");
   assert.equal(pr.body.base, "develop");
-  assert.equal(pr.body.draft, false);
-  // With --base-branch set, we do NOT GET the repo default branch.
+  assert.equal(pr.body.draft, false); // string "false" coerced to boolean
+  // With --base-branch set, we do NOT GET the repo default branch, only its ref tip.
   assert.ok(!gh.calls.some((c) => c.method === "GET" && c.path === "/repos/octo/repo"));
 });
 
 test("create-pull-request: rejects an empty change set", async () => {
   const gh = { async request() {}, async graphql() {} };
   await assert.rejects(
-    () => createPullRequest.apply({ title: "t", body: "b", base_sha: "abc1234" }, { owner: "o", repo: "r" }, gh, {}),
+    () => createPullRequest.apply({ title: "t", body: "b" }, { owner: "o", repo: "r" }, gh, {}),
     /nothing to commit/
   );
 });

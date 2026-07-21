@@ -68,35 +68,40 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 > already proven by the discussion ops.
 >
 > **The Class C data path — BUILT + PROVEN (2.4).** Design as agreed: guest git detects the change,
-> host applies it via GraphQL `createCommitOnBranch`. **End-to-end verified** — run 29797688007 had the
-> microVM agent create a file, the guest `create-pull-request` helper ship the change set through the
-> dispatch channel (no token in the guest), and the host safe-outputs server open
-> **PR #22** with a **signed** commit (`verified: true`) containing exactly the agent's file. Implementation:
-> 1. **Guest side** (a git-aware wrapper for `create_pull_request` / `push_to_branch`): `git add -A`, then
->    compute the change set vs the base commit (`git diff --name-status` → adds/modifies/deletes, read file
->    bytes). We already know the base SHA and the remote.
-> 2. Ship that change set **through the existing dispatch channel** (lane 2 — the only write path; guest
->    still holds no token) as the tool payload: `{ base_sha, additions:[{path,contents_b64}], deletions:[{path}], title, body, draft }`.
->    The loopback tap makes size a non-issue for normal changes (chunk later if needed).
-> 3. **Host side** (server, real token): `POST /git/refs` create `refs/heads/<branch>` at the base SHA (one
->    call), then the GraphQL **`createCommitOnBranch`** mutation with
->    `fileChanges: { additions:[{path, contents(base64)}], deletions:[{path}] }` + `expectedHeadOid` → a
->    signed commit on the branch (**this is the "REST/GraphQL push to a branch"** — whole-file, no
->    blobs/trees plumbing) → `POST /pulls`. `push-to-pull-request-branch` = the same minus the final `/pulls`.
+> host applies it via GraphQL `createCommitOnBranch`. **End-to-end verified** (2.4, later reworked in 2.5).
+> Implementation (as of the **2.5 rework** — create-pull-request is a *plain MCP tool*, no special guest
+> helper):
+> 1. **Agent side** — invokes it like any other safe output via its shim, passing the changed paths:
+>    `"$MV_MCP_DIR/create_pull_request" --title "…" --body "…" --add <path> [--add <path>] [--delete <path>] [--draft false]`.
+>    The agent already knows what it changed, so it lists paths (no `git` needed). *(Opt-in `--add-all`
+>    git-detect is a future add.)*
+> 2. **Generic shim capability** (harness, `generateServerShim`) — **not** create-pull-request-specific: in
+>    flag mode, `--add <path>` reads the file from `$GITHUB_WORKSPACE` (paths sandboxed, no `..`/absolute),
+>    base64s it into `additions[]`; `--delete <path>` → `deletions[]`; `--k v` → scalar. Contents ride the
+>    POST **body** (stdin), never argv (ARG_MAX). Single-tool servers may omit the tool name (host infers).
+>    This flows through the **existing dispatch channel** — the guest still holds no token.
+> 3. **Host side** (safe-output server, real token): resolve base = repo default branch + its tip SHA →
+>    `POST /git/refs` create `refs/heads/<generated-branch>` at that tip → GraphQL **`createCommitOnBranch`**
+>    (`fileChanges: { additions:[{path, contents(base64)}], deletions:[{path}] }`, `expectedHeadOid` = base
+>    tip) → signed commit → `POST /pulls`. **The guest supplies no base SHA** — changes commit onto the base
+>    tip. `push-to-pull-request-branch` = the same minus the final `/pulls` (commits onto the triggering PR's
+>    head).
+>
+> **Why the rework (2.5):** the first cut (2.4) shipped an agent-facing `/__rt/helpers/create-pull-request`
+> script that did guest git detection and bypassed the MCP model — special-casing one safe output in the
+> infra layer. Corrected: create-pull-request is now a normal MCP tool; the guest-side file plumbing is a
+> **generic** shim capability (`--add`/`--delete`), so nothing is special-cased and the harness stays
+> decoupled from safe-outputs.
 >
 > **gh-aw parity for the two open decisions (verified in `create_pull_request.cjs`):**
-> - **Branch name = harness-generated.** gh-aw auto-generates `<workflowId>-<randomHex>` when the agent
->   supplies none; if the agent *suggests* a branch it gets a random-hex salt suffix (dedup) unless
->   `preserve-branch-name: true`, plus an optional `branch-prefix`. → **We generate it host-side** (agent
->   can't choose the target), optional author `--branch-prefix`.
+> - **Branch name = harness-generated.** gh-aw auto-generates `<workflowId>-<randomHex>`; optional
+>   `branch-prefix`. → **We generate it host-side** (agent can't choose), optional author `--branch-prefix`.
 > - **Base = the target repo's default branch** (dynamically resolved, *decoupled from the event context* —
->   gh-aw ADR 30071), or an author `base-branch`. The agent may override `base` **only** within an author
->   `allowed-base-branches` allowlist (else rejected). → **Default = repo default branch; author
->   `--base-branch`; agent override gated by `--allowed-base-branches`** (mirrors our safe-default model).
+>   gh-aw ADR 30071), or an author `base-branch`. → **Default = repo default branch; author `--base-branch`.**
 >
-> **Class C is BUILT + e2e-verified (2.4)** — the file-change data path is proven, so full parity no
-> longer has an unproven architectural gap. What remains is mechanical: the B+ family (Projects V2 etc.,
-> which need a target/config decision, not new mechanism) and `upload-*` (runner-cred wiring).
+> **Class C is BUILT + e2e-verified** — the file-change data path is proven, so full parity no longer has an
+> unproven architectural gap. What remains is mechanical: the B+ family (Projects V2 etc., which need a
+> target/config decision, not new mechanism) and `upload-*` (runner-cred wiring).
 
 **High-value, common — strong candidates:**
 - [x] `create-issue` — arguably the single most-used safe output. **Implemented (2.1).**

@@ -40,3 +40,20 @@ export async function resolveBaseBranch(github, ctx, config = {}) {
   if (!def) throw new Error(`Could not resolve the default branch of ${ctx.owner}/${ctx.repo}.`);
   return def;
 }
+
+/**
+ * Resolve the base branch AND its current tip commit SHA — the point the new head
+ * branch is created from (and the `createCommitOnBranch` parent). The guest never
+ * supplies a base SHA; the changes are committed onto the base branch's tip.
+ * @param {{request: Function}} github
+ * @param {{owner: string, repo: string}} ctx
+ * @param {{baseBranch?: string}} config
+ * @returns {Promise<{branch: string, sha: string}>}
+ */
+export async function resolveBaseRef(github, ctx, config = {}) {
+  const branch = await resolveBaseBranch(github, ctx, config);
+  const ref = await github.request("GET", `/repos/${ctx.owner}/${ctx.repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+  const sha = ref && ref.object && ref.object.sha;
+  if (!sha) throw new Error(`Could not resolve the tip of base branch '${branch}' in ${ctx.owner}/${ctx.repo}.`);
+  return { branch, sha };
+}
