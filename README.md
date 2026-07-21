@@ -66,12 +66,29 @@ host-side (see Design), so the agent never sees it.
 |---|---|---|---|
 | `add-labels` | `add_labels` | `labels: string[]` | Add labels to the triggering issue/PR |
 | `remove-labels` | `remove_labels` | `labels: string[]` | Remove labels from the triggering issue/PR |
+| `replace-labels` | `replace_labels` | `labels: string[]` | Set the triggering issue/PR's labels to exactly this set |
 | `add-comment` | `add_comment` | `body: string` | Comment on the triggering issue/PR |
 | `update-issue` | `update_issue` | `title?`, `body?`, `state?` (≥1) | Edit the triggering issue's title/body/state |
 | `close-issue` | `close_issue` | `body?`, `state_reason?` | Close the triggering issue (optional closing comment) |
 | `create-issue` | `create_issue` | `title`, `body`, `labels?` | Create a new issue in the repo |
+| `assign-to-user` | `assign_to_user` | `assignees: string[]` | Assign users to the triggering issue/PR |
+| `unassign-from-user` | `unassign_from_user` | `assignees: string[]` | Remove assignees from the triggering issue/PR |
+| `assign-milestone` | `assign_milestone` | `milestone: string` (number or title) | Assign a milestone to the triggering issue/PR |
 | `create-discussion` | `create_discussion` | `title`, `body`, `category?` | Create a GitHub Discussion (GraphQL) |
+| `update-discussion` | `update_discussion` | `discussion_number`, `title?`, `body?` | Edit a discussion's title/body (GraphQL) |
+| `close-discussion` | `close_discussion` | `discussion_number`, `reason?` | Close a discussion (GraphQL) |
+| `hide-comment` | `hide_comment` | `comment_id` (node id), `reason?` | Minimize/hide a comment (GraphQL) |
 | `create-pull-request` | `create_pull_request` | `title`, `body`, `draft?` | Open a PR from the harness-prepared branch |
+| `update-pull-request` | `update_pull_request` | `title?`, `body?`, `state?` (≥1) | Edit the triggering PR's title/body/state |
+| `close-pull-request` | `close_pull_request` | `body?` | Close (without merging) the triggering PR |
+| `merge-pull-request` | `merge_pull_request` | `merge_method?`, `commit_title?`, `commit_message?` | Merge the triggering PR |
+| `mark-pull-request-ready-for-review` | `mark_pull_request_ready_for_review` | — | Take the triggering PR out of draft (GraphQL) |
+| `request-reviewers` | `request_reviewers` | `reviewers?`, `team_reviewers?` | Request reviewers on the triggering PR |
+| `submit-pull-request-review` | `submit_pull_request_review` | `event`, `body?` | Submit a review (COMMENT / APPROVE / REQUEST_CHANGES) |
+| `create-pull-request-review-comment` | `create_pull_request_review_comment` | `path`, `line`, `body`, `start_line?`, `side?` | Inline review comment on the triggering PR's diff |
+| `resolve-pull-request-review-thread` | `resolve_pull_request_review_thread` | `thread_id` (node id) | Resolve a PR review thread (GraphQL) |
+| `dispatch-workflow` | `dispatch_workflow` | `workflow`, `ref?`, `inputs?` | `workflow_dispatch` an allow-listed workflow |
+| `dispatch-repository` | `dispatch_repository` | `event_type`, `client_payload?` | Fire an allow-listed `repository_dispatch` event |
 
 Every tool schema exposes only the *intent*. The target — which issue/PR, which repo, and (for
 `create-pull-request`) which head/base branch — is bound host-side from the environment, never
@@ -90,8 +107,8 @@ safe-outputs add-comment --max-links 10 --no-footer
 
 | Flag | Operation | Effect |
 |---|---|---|
-| `--allowed a,b,c` | `add-labels`, `remove-labels` | Reject any label not in the allow-list (glob patterns OK) |
-| `--blocked a,*[bot]` | `add-labels`, `remove-labels` | Reject any label matching the block-list (glob patterns OK) |
+| `--allowed a,b,c` | `add-labels`, `remove-labels`, `replace-labels`, `assign-to-user`, `request-reviewers` | Reject any label/user not in the allow-list (glob patterns OK) |
+| `--blocked a,*[bot]` | `add-labels`, `remove-labels`, `replace-labels` | Reject any label matching the block-list (glob patterns OK) |
 | `--max N` | all | Cap at N **calls per run** (also caps labels per call for label ops). `-1` = unlimited |
 | `--max-links N` | `add-comment` | Reject a comment body with more than N links |
 | `--allowed-domains a.com,b.com` | body ops | **Opt-in**: reject body text that links to a domain not in the list |
@@ -104,7 +121,11 @@ safe-outputs add-comment --max-links 10 --no-footer
 | `--reviewers u1,u2` | `create-pull-request` | Request reviewers on the new PR |
 | `--title-prefix "<s>"` | `create-issue`, `create-discussion` | Prefix the agent's title (e.g. `"[bot] "`) |
 | `--category name` | `create-discussion` | Pin the discussion category (else the workflow's default / first) |
-| `--allow-body true\|false` | `close-issue` | Allow an agent-supplied closing comment (default `true`) |
+| `--allow-body true\|false` | `close-issue`, `close-pull-request` | Allow an agent-supplied closing comment (default `true`) |
+| `--merge-method merge\|squash\|rebase` | `merge-pull-request` | Pin the merge method (agent can't override) |
+| `--allowed-events approve,comment` | `submit-pull-request-review` | Which review events are permitted (default: `comment` only) |
+| `--allowed-workflows a.yml,b.yml` | `dispatch-workflow` | **Required** allow-list of dispatchable workflows (default deny) |
+| `--allowed-event-types a,b` | `dispatch-repository` | **Required** allow-list of `repository_dispatch` types (default deny) |
 | `--footer` / `--no-footer` / `--footer-text "<tmpl>"` | body ops | Attribution footer (default **on**); `{workflow}`/`{run_url}`/`{repo}` placeholders |
 
 Run-wide `--max` needs a per-instance state dir; the harness supplies it via the `MCP_STATE_DIR`

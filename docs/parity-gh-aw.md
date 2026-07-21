@@ -55,23 +55,44 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 >
 > | Class | Examples | Needs | Status |
 > |---|---|---|---|
-> | **A — REST, target bound host-side** | merge/update/close-PR, dispatch-workflow, assign-*, add-reviewer, PR-review-flow | nothing new | ✅ **proven** by the 8 shipped |
-> | **B — GraphQL-only** | projects, sub-issues, hide-comment, update/close-discussion, issue-type/field | the `graphql()` client | ✅ **proven** (create-discussion; ~40 LOC, no new dep) |
-> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | a way to move agent-produced **bytes** out of the discarded guest overlay | ⚠️ **UNPROVEN — the one real gap (see below)** |
+> | **A — REST, target bound host-side** | merge/update/close-PR, dispatch-workflow/-repository, assign-/unassign-user, request-reviewers, replace-labels, assign-milestone, submit-review, review-comment | nothing new | ✅ **DONE** — 12 ops shipped (2.3) |
+> | **B — GraphQL-only** | create/update/close-discussion, hide-comment, mark-ready-for-review, resolve-review-thread | the `graphql()` client | ✅ **DONE** — 5 more ops shipped (2.3); ~40-LOC client, no new dep |
+> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | move agent-produced **bytes** out of the discarded overlay → apply host-side via the **Git Data API** (see design below) | ⚠️ **UNPROVEN — the one real gap; design agreed, not built** |
 > | **D — needs special runner creds** | `upload-artifact` (`ACTIONS_RUNTIME_TOKEN`), `create-check-run` (checks:write) | host-side wiring | 🔧 host has them; wiring only |
 > | **E — gh-aw constructs, not GitHub writes** | `staged`/preview, `comment-memory`, `create-agent-session`, threat-detection | design, not an API port | signals DONE (2.2); rest is policy |
+> | **B+ — heavier GraphQL (needs product decisions)** | Projects V2 (`create/update-project`, status-update, `set-issue-field`), `set-issue-type`, `link-sub-issue`, code-scanning | GraphQL + a **target/config decision** (which project? which field?) | ⏸️ **deferred pending a decision** (not a portability blocker) |
+>
+> **As of 2.3, Classes A and B are ported** (the straightforward REST + GraphQL surface — 17 new ops, 25
+> total). The only *portability-unproven* piece remains **Class C** (below). The **B+** family (Projects V2,
+> issue types/fields, sub-issues, code scanning) is deferred not for portability reasons but because each
+> needs a product/config decision (e.g. *which* project board to write to) — the GraphQL mechanism itself is
+> already proven by the discussion ops.
 >
 > **The one unproven piece — file-changing outputs have no guest→host data path yet.** The workspace is
 > mounted **read-only lower + throwaway tmpfs overlay**, so **every file the agent writes in the guest is
 > discarded** (`microvm-agent/src/guest-assets.js`). `create-pull-request`'s code is correct but assumes
 > *"the harness commits the agent's changes to a branch and sets `GITHUB_HEAD_BRANCH`"* — and **nothing in
-> the harness does that** (no git commit/push, no branch prep, `GITHUB_HEAD_BRANCH` never set). So
-> `create-pull-request` would hard-fail at `requirePullRequestContext`; it has never been exercised (the
-> e2e only does `add-labels`, a metadata write with no bytes). This is **not a blocker in principle**
-> (capture the overlay `upperdir`, or add a "collect" channel, then commit+push / upload host-side) but it
-> is **real, unbuilt, and shared by every Class-C output**. **Proving Class C is the gate to declaring full
-> parity** — it should be the next milestone. Everything else is either proven or mechanical repetition of
-> a proven path.
+> the harness does that** yet. So `create-pull-request` would hard-fail at `requirePullRequestContext`; it
+> has never been exercised (the e2e only does `add-labels`, a metadata write with no bytes).
+>
+> **Agreed design (2026-07-20) — guest git detects the change; host applies it via the REST Git Data API.**
+> No `git push`, no credential ever in the guest, invariant preserved:
+> 1. **Guest side** (a git-aware wrapper for `create_pull_request` / `push_to_branch`): `git add -A`, then
+>    compute the change set vs the base commit (`git diff --name-status` for add/modify/delete, read blob
+>    bytes). We already know the base `HEAD` SHA and the remote.
+> 2. Ship that change set **through the existing dispatch channel** (lane 2 — the only write path; guest
+>    still holds no token) as the tool payload: `{ base_sha, changes:[{path,mode,status,content_b64|deleted}] }`
+>    + title/body/draft. The loopback tap makes size a non-issue for normal changes (chunk later if needed).
+> 3. **Host side** (server, real token) applies it entirely via REST: `POST /git/blobs` per add/modify →
+>    `POST /git/trees` (base_tree = base commit's tree) → `POST /git/commits` (parent = base) →
+>    `POST /git/refs` create/`PATCH` `refs/heads/<branch>` (**this is the "REST push to a branch"**) →
+>    `POST /pulls`. `push-to-pull-request-branch` = the same minus the final `/pulls`.
+> - **Open decisions before building:** (1) branch-name source — harness-generated host-side (agent can't
+>   choose, consistent with "target not agent-selectable") vs. an author input; (2) base = the checked-out
+>   ref's `HEAD`, targeting the default branch.
+>
+> **Proving Class C is the gate to declaring full parity** — it's the next milestone. Everything else is
+> either done, or mechanical repetition of a proven path (the B+ family).
 
 
 **High-value, common — strong candidates:**
@@ -79,7 +100,7 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 - [x] `create-discussion` — **implemented (2.1).**
 - [x] `close-issue` — **implemented (2.1).**
 - [x] `remove-labels` — **implemented (2.1).**
-- [ ] `push-to-pull-request-branch` — not implemented (**Class C — needs the guest→host data path; see §2.0**).
+- [ ] `push-to-pull-request-branch` — not built (**Class C — needs the guest→host data path; design agreed in §2.0**).
 
 **System "signals" in gh-aw — NOT safe outputs for us (harness concern, out of scope here):**
 - [x] `missing-tool`, `missing-data`, `report-incomplete`, `noop` aren't GitHub writes — they're the agent
@@ -88,18 +109,21 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
   `::error::`/`::warning::` + step status), and should be **always on** (independent of whether any
   safe output is configured). **Implemented in microvm-agent (2.2)** — see `microvm-agent/TODO.md`. See §2.1.
 
-**Niche / heavy — probably skip for now (~25 types):** — [ ] **none implemented (deferred)**
-- Projects (`create-project`, `update-project`, `create-project-status-update`), code scanning
-  (`create-code-scanning-alert`, `autofix-code-scanning-alert`), releases (`update-release`),
-  assets (`upload-asset`, `upload-artifact`), dispatch (`dispatch-workflow`, `dispatch_repository`,
-  `call-workflow`), PR review flow (`create-pull-request-review-comment`,
-  `submit-pull-request-review`, `resolve-pull-request-review-thread`,
-  `reply-to-pull-request-review-comment`, `dismiss-pull-request-review`,
-  `mark-pull-request-as-ready-for-review`), `merge-pull-request`, `update-pull-request`,
-  `close-pull-request`, labels (`replace-label`), issue meta (`set-issue-type`, `set-issue-field`,
-  `link-sub-issue`, `assign-milestone`, `assign-to-agent`, `assign-to-user`, `unassign-from-user`,
-  `add-reviewer`), `hide-comment`, `comment-memory`, `create-check-run`, `create-agent-session`,
-  `update-discussion`, `close-discussion`.
+**Class A/B ported in 2.3 (from the list below):** `merge-pull-request`, `update-pull-request`,
+`close-pull-request`, `mark-pull-request-as-ready-for-review`, `submit-pull-request-review`,
+`create-pull-request-review-comment`, `resolve-pull-request-review-thread`, `request-reviewers`
+(`add-reviewer`), `replace-labels` (`replace-label`), `assign-milestone`, `assign-to-user`,
+`unassign-from-user`, `hide-comment`, `update-discussion`, `close-discussion`, `dispatch-workflow`,
+`dispatch-repository`. ✅
+
+**Still deferred (~10 — B+ needs a product/config decision, or C/D/E):**
+- [ ] Projects (`create-project`, `update-project`, `create-project-status-update`), `set-issue-field`,
+  `set-issue-type`, `link-sub-issue` — **B+** (GraphQL proven, but need "which project/field/type?").
+- [ ] Code scanning (`create-code-scanning-alert`, `autofix-code-scanning-alert`), `update-release` — niche.
+- [ ] `upload-asset`, `upload-artifact` — **Class C/D** (bytes + runner creds).
+- [ ] `reply-to-pull-request-review-comment`, `dismiss-pull-request-review` — niche (need extra ids).
+- [ ] `call-workflow`, `comment-memory`, `create-check-run`, `create-agent-session`, `assign-to-agent` —
+  gh-aw constructs / special creds (**D/E**).
 
 ### 2.1 Build order + per-op decisions
 
@@ -463,7 +487,12 @@ safe everywhere and apply throughout.
 **P2 — heavier / niche**
 - [x] Cross-repo (`target-repo`/`allowed-repos`) + `target:*`/explicit number — **as author-supplied flags,
   default stays triggering-object-only**; `title-prefix`/auto-`labels`/`assignees`.
-- [ ] `push-to-pull-request-branch`, PR review flow, projects, dispatch, `merge-pull-request`.
+- [x] PR lifecycle + review flow (`merge`/`update`/`close-pull-request`, `submit-review`, `review-comment`,
+  `resolve-review-thread`, `mark-ready`, `request-reviewers`), `dispatch-workflow`/`-repository`,
+  `replace-labels`, `assign-milestone`, `assign`/`unassign-user`, `hide-comment`,
+  `update`/`close-discussion` — **Class A/B, done in 2.3.**
+- [ ] `push-to-pull-request-branch` (**Class C — see §2.0**); Projects V2 / `set-issue-field` /
+  `set-issue-type` / `link-sub-issue` (**B+ — need a target/config decision**); code scanning; `upload-*`.
 - [ ] **LLM threat-detection** pass (a second-model safety net over proposed outputs) — heavier; less
   critical for us given isolation, but would catch an agent laundering malicious text through a write.
 
