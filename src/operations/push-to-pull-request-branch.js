@@ -43,8 +43,8 @@ export default {
   defaultMax: 1,
   description:
     "Commit a set of file changes onto the head branch of the pull request this workflow is running " +
-    "on. The target is fixed to the triggering pull request unless the workflow widens it. (Normally " +
-    "invoked via the guest 'push-to-pull-request-branch' helper, which fills in the file changes.)",
+    "on. Pass the files you changed with --add <path> (repeatable) and removals with --delete <path>, " +
+    "plus a commit --message. The target is fixed to the triggering pull request unless the workflow widens it.",
   inputSchema: {
     type: "object",
     required: ["message"],
