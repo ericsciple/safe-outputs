@@ -75,21 +75,32 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 > the harness does that** yet. So `create-pull-request` would hard-fail at `requirePullRequestContext`; it
 > has never been exercised (the e2e only does `add-labels`, a metadata write with no bytes).
 >
-> **Agreed design (2026-07-20) — guest git detects the change; host applies it via the REST Git Data API.**
-> No `git push`, no credential ever in the guest, invariant preserved:
+> **Agreed design (2026-07-20, updated after reading gh-aw's source) — guest git detects the change; host
+> applies it via the GraphQL `createCommitOnBranch` mutation.** No `git push`, no credential in the guest,
+> invariant preserved. **This matches gh-aw**, which uses `createCommitOnBranch` by default (see
+> `actions/setup/js/push_signed_commits.cjs`) — a *whole-file* API (not low-level blobs/trees), atomic, and
+> the commit is **cryptographically signed** by GitHub:
 > 1. **Guest side** (a git-aware wrapper for `create_pull_request` / `push_to_branch`): `git add -A`, then
->    compute the change set vs the base commit (`git diff --name-status` for add/modify/delete, read blob
->    bytes). We already know the base `HEAD` SHA and the remote.
+>    compute the change set vs the base commit (`git diff --name-status` → adds/modifies/deletes, read file
+>    bytes). We already know the base SHA and the remote.
 > 2. Ship that change set **through the existing dispatch channel** (lane 2 — the only write path; guest
->    still holds no token) as the tool payload: `{ base_sha, changes:[{path,mode,status,content_b64|deleted}] }`
->    + title/body/draft. The loopback tap makes size a non-issue for normal changes (chunk later if needed).
-> 3. **Host side** (server, real token) applies it entirely via REST: `POST /git/blobs` per add/modify →
->    `POST /git/trees` (base_tree = base commit's tree) → `POST /git/commits` (parent = base) →
->    `POST /git/refs` create/`PATCH` `refs/heads/<branch>` (**this is the "REST push to a branch"**) →
->    `POST /pulls`. `push-to-pull-request-branch` = the same minus the final `/pulls`.
-> - **Open decisions before building:** (1) branch-name source — harness-generated host-side (agent can't
->   choose, consistent with "target not agent-selectable") vs. an author input; (2) base = the checked-out
->   ref's `HEAD`, targeting the default branch.
+>    still holds no token) as the tool payload: `{ base_sha, additions:[{path,contents_b64}], deletions:[{path}], title, body, draft }`.
+>    The loopback tap makes size a non-issue for normal changes (chunk later if needed).
+> 3. **Host side** (server, real token): `POST /git/refs` create `refs/heads/<branch>` at the base SHA (one
+>    call), then the GraphQL **`createCommitOnBranch`** mutation with
+>    `fileChanges: { additions:[{path, contents(base64)}], deletions:[{path}] }` + `expectedHeadOid` → a
+>    signed commit on the branch (**this is the "REST/GraphQL push to a branch"** — whole-file, no
+>    blobs/trees plumbing) → `POST /pulls`. `push-to-pull-request-branch` = the same minus the final `/pulls`.
+>
+> **gh-aw parity for the two open decisions (verified in `create_pull_request.cjs`):**
+> - **Branch name = harness-generated.** gh-aw auto-generates `<workflowId>-<randomHex>` when the agent
+>   supplies none; if the agent *suggests* a branch it gets a random-hex salt suffix (dedup) unless
+>   `preserve-branch-name: true`, plus an optional `branch-prefix`. → **We generate it host-side** (agent
+>   can't choose the target), optional author `--branch-prefix`.
+> - **Base = the target repo's default branch** (dynamically resolved, *decoupled from the event context* —
+>   gh-aw ADR 30071), or an author `base-branch`. The agent may override `base` **only** within an author
+>   `allowed-base-branches` allowlist (else rejected). → **Default = repo default branch; author
+>   `--base-branch`; agent override gated by `--allowed-base-branches`** (mirrors our safe-default model).
 >
 > **Proving Class C is the gate to declaring full parity** — it's the next milestone. Everything else is
 > either done, or mechanical repetition of a proven path (the B+ family).
