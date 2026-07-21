@@ -12,6 +12,9 @@ commitment — it's a map of the gaps.
   `safe_outputs_config_types.go`, `docs/.../safe-outputs-specification.md`). gh-aw evolves quickly;
   re-verify before acting.
 
+> **Status legend:** `[x]` done · `[~]` partially done · `[ ]` not started. The `[x]/[~]/[ ]` markers on
+> the lists below (§2, §3.1, §4.1, §6) let you scan done-vs-not at a glance.
+
 > **Framing:** the biggest differences are (1) **breadth** (4 ops vs ~45) and (2) **content
 > sanitization depth**. Architecturally we're aligned (the agent never holds a write token). Our
 > **sandbox isolation is stronger** — the agent runs in a hardware microVM with no credentials and
@@ -42,17 +45,20 @@ relies on a read-only token + OS sandbox.
 We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 
 **High-value, common — strong candidates:**
-- `create-issue` — arguably the single most-used safe output. **We lack it.**
-- `create-discussion`, `close-issue`, `remove-labels`, `push-to-pull-request-branch`.
+- [x] `create-issue` — arguably the single most-used safe output. **Implemented (2.1).**
+- [x] `create-discussion` — **implemented (2.1).**
+- [x] `close-issue` — **implemented (2.1).**
+- [x] `remove-labels` — **implemented (2.1).**
+- [ ] `push-to-pull-request-branch` — not implemented.
 
 **System "signals" in gh-aw — NOT safe outputs for us (harness concern, out of scope here):**
-- `missing-tool`, `missing-data`, `report-incomplete`, `noop` aren't GitHub writes — they're the agent
+- [x] `missing-tool`, `missing-data`, `report-incomplete`, `noop` aren't GitHub writes — they're the agent
   **reporting back to the Actions run**. In gh-aw they ride the safe-outputs pipeline; **in our design
   they belong to the harness (microvm-agent)**, surfaced the Actions-native way (annotations
   `::error::`/`::warning::` + step status), and should be **always on** (independent of whether any
-  safe output is configured). Tracked in `microvm-agent/TODO.md`, not here. See §2.1.
+  safe output is configured). **Implemented in microvm-agent (2.2)** — see `microvm-agent/TODO.md`. See §2.1.
 
-**Niche / heavy — probably skip for now (~25 types):**
+**Niche / heavy — probably skip for now (~25 types):** — [ ] **none implemented (deferred)**
 - Projects (`create-project`, `update-project`, `create-project-status-update`), code scanning
   (`create-code-scanning-alert`, `autofix-code-scanning-alert`), releases (`update-release`),
   assets (`upload-asset`, `upload-artifact`), dispatch (`dispatch-workflow`, `dispatch_repository`,
@@ -202,7 +208,9 @@ gh-aw per-type options we **don't** have:
 Decisions for §3. gh-aw is the proven pattern, so where we differ we adopt theirs unless our
 stronger-isolation model calls for a safer default. Nothing implemented yet — this is the plan.
 
-1. **`max` — adopt gh-aw semantics (call-count), retire ours (per-call cap).**
+1. **[~] `max` — adopt gh-aw semantics (call-count), retire ours (per-call cap).** *(safe-outputs side
+   DONE — `src/limits.js` `claimCall`; harness-side per-step `MCP_STATE_DIR`/GUID wiring in microvm-agent
+   NOT done — falls back to a `RUNNER_TEMP` dir today.)*
    - `--max N` = at most **N successful calls** to this tool **per run** (gh-aw counts calls, not
      items). For `add-labels`, `--max` also caps labels **per call** (gh-aw's dual use). Defaults:
      **10** generally, **1** for create-issue (match gh-aw). This replaces our current `add-labels
@@ -244,7 +252,7 @@ stronger-isolation model calls for a safer default. Nothing implemented yet — 
        (safe-outputs run outside our harness) → best-effort: default to a dir under `RUNNER_TEMP`/tmp and
        log that per-step/per-instance isolation isn't guaranteed.
 
-2. **`target` — support, safe default preserved.**
+2. **[x] `target` — support, safe default preserved.** *(DONE — `src/targets.js`.)*
    - **Default (no `target`):** bound to the **event-payload object**, and the target is **not in the
      agent-visible schema** (agent can't choose). Unchanged from today.
    - **`target: "*"` (author opt-in):** expose an explicit `item_number` field in the tool schema so
@@ -256,20 +264,22 @@ stronger-isolation model calls for a safer default. Nothing implemented yet — 
      the transparent reject uniformly, matching our inline-reject philosophy from §4.1.) `target: "*"`
      without a supplied number is also rejected.
 
-3. **`target-repo` / `allowed-repos` — support, safe default = current repo.**
+3. **[x] `target-repo` / `allowed-repos` — support, safe default = current repo.** *(DONE — `src/targets.js`.)*
    - Author-supplied flags only (never agent-settable). `target-repo` widens to another repo;
      `allowed-repos` gates permitted cross-repo targets (**default deny**; same-repo always allowed).
 
-4. **Label allowlist — KEEP (gh-aw has it), align naming to gh-aw.**
+4. **[x] Label allowlist — KEEP (gh-aw has it), align naming to gh-aw.** *(DONE — `--allowed`/`--blocked`
+   via `src/labelPolicy.js` + `src/glob.js`.)*
    - gh-aw's `add-labels` uses **`allowed:`** + **`blocked:`** (glob patterns); `create-issue` /
      `create-discussion` use a dedicated **`allowed-labels:`**. **Rename** our add-labels
      `--allowed-labels` → **`--allowed`**, add **`--blocked`** (glob). Reserve `--allowed-labels` for a
      future create-issue/create-discussion.
 
-5. **`title-prefix`, `labels` (auto-apply), `assignees`, `reviewers` — add** (author-supplied,
-   low-risk, closes the gap).
+5. **[x] `title-prefix`, `labels` (auto-apply), `assignees`, `reviewers` — add** (author-supplied,
+   low-risk, closes the gap). *(DONE — wired into create-issue/create-pull-request.)*
 
-6. **`footer` — start here (low-priority but simple). `messages.*` — mostly N/A.**
+6. **[x] `footer` — start here (low-priority but simple). `messages.*` — mostly N/A.** *(DONE — `src/footer.js`,
+   default ON, `--footer`/`--no-footer`/`--footer-text`.)*
    - **What footer is in gh-aw:** *both* a top-level **boolean** (`footer: true|false`, per-handler
      override) **and** `messages.footer` = a **string template with `{placeholders}`**
      (`{workflow_name}`, `{run_url}`, `{triggering_number}`). Default template:
@@ -315,13 +325,23 @@ content sanitization still matters. What each side does:
 
 ### 4.1 When sanitization runs — reject (inline) vs. transform (LOCKED 2026-07-20; partly IMPLEMENTED)
 
-**Implementation status (2026-07-20):** DONE — NFC + zero-width removal, control-char strip, CRLF→LF,
-dangerous-HTML stripping (`<script>/<iframe>/<object>/<embed>/<style>/<link>/<meta>/<base>` + `on*`
-handlers), all **code-region-aware** (preserve fenced/inline code); @mention backtick (prose only);
-oversize → **reject** via `maxLength` schema validation (`validate.js`); opt-in URL **domain allow-list**
-→ reject (`--allowed-domains`, `src/domains.js`); over-`--max-links` reject; disallowed-label reject.
-DEFERRED (lower value; GitHub's renderer covers some): slash-command escape, closing-keyword defang,
-XML-comment removal, code-fence balancing, non-http(s)/mailto protocol filtering.
+**Implementation status (2026-07-20):**
+
+DONE:
+- [x] NFC normalization + zero-width removal, control-char strip, CRLF→LF (applied everywhere).
+- [x] Dangerous-HTML stripping (`<script>/<iframe>/<object>/<embed>/<style>/<link>/<meta>/<base>` + `on*`
+  handlers), **code-region-aware** (preserve fenced/inline code).
+- [x] @mention backtick-neutralization (prose only, code-region-aware).
+- [x] Oversize → **reject** via `maxLength` schema validation (`validate.js`) — no silent truncation.
+- [x] Opt-in URL **domain allow-list** → reject (`--allowed-domains`, `src/domains.js`).
+- [x] Over-`--max-links` reject; disallowed-label reject.
+
+DEFERRED (lower value; GitHub's renderer covers some):
+- [ ] Slash-command escape (`^/command` → `\/command`).
+- [ ] Closing-keyword defang (`fixes #123`).
+- [ ] XML-comment removal (`<!-- -->`).
+- [ ] Code-fence balancing (close unterminated ``` blocks).
+- [ ] Non-http(s)/mailto protocol filtering.
 
 
 - **gh-aw runs it at BOTH ends:** synchronously at the MCP gateway (tool-call time → the model gets
@@ -394,22 +414,23 @@ safe everywhere and apply throughout.
 ## 6. Prioritized gap list (for one-by-one decisions later)
 
 **P0 — cheap, high value**
-- Add `create-issue` (most-used). (`missing-tool` et al. moved to the harness — see §2 / microvm-agent.)
-- Sanitization hardening (transforms): **zero-width/Unicode NFC**, **HTML/script stripping**, XML-comment
-  removal + code-fence balancing; and move policy checks to **reject-inline** per the locked §4.1 split
-  (reject oversize/bad-domain/over-limit/disallowed-label; no silent truncation).
+- [x] Add `create-issue` (most-used). (`missing-tool` et al. moved to the harness — see §2 / microvm-agent.)
+- [x] Sanitization hardening (transforms): **zero-width/Unicode NFC**, **HTML/script stripping**, and move
+  policy checks to **reject-inline** per the locked §4.1 split (reject oversize/bad-domain/over-limit/
+  disallowed-label; no silent truncation). *(XML-comment removal + code-fence balancing still deferred — §4.1.)*
 
 **P1**
-- `remove-labels`, `close-issue`, `create-discussion`.
-- Opt-in **URL domain allow-listing** + protocol filter (reject on violation).
-- **`staged`/preview** (dry-run: log instead of write).
-- Run-wide **op-count** enforcement (§5 external-state approach).
+- [x] `remove-labels`, `close-issue`, `create-discussion`.
+- [x] Opt-in **URL domain allow-listing** (reject on violation). *(protocol filter still deferred — §4.1.)*
+- [ ] **`staged`/preview** (dry-run: log instead of write).
+- [~] Run-wide **op-count** enforcement (§3.1(1)). *(safe-outputs `claimCall` DONE; harness `MCP_STATE_DIR`
+  per-step isolation NOT wired — see §3.1(1).)*
 
 **P2 — heavier / niche**
-- Cross-repo (`target-repo`/`allowed-repos`) + `target:*`/explicit number — **as author-supplied flags,
-  default stays triggering-object-only**; `title-prefix`/auto-`labels`/`assignees`,
-  `push-to-pull-request-branch`, PR review flow, projects, dispatch, `merge-pull-request`.
-- **LLM threat-detection** pass (a second-model safety net over proposed outputs) — heavier; less
+- [x] Cross-repo (`target-repo`/`allowed-repos`) + `target:*`/explicit number — **as author-supplied flags,
+  default stays triggering-object-only**; `title-prefix`/auto-`labels`/`assignees`.
+- [ ] `push-to-pull-request-branch`, PR review flow, projects, dispatch, `merge-pull-request`.
+- [ ] **LLM threat-detection** pass (a second-model safety net over proposed outputs) — heavier; less
   critical for us given isolation, but would catch an agent laundering malicious text through a write.
 
 **Explicitly NOT gaps (resolved in discussion 2026-07-20)**
