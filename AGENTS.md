@@ -1,4 +1,6 @@
-# Copilot instructions — safe-outputs
+# AGENTS.md — safe-outputs
+
+Instructions for AI coding agents working in this repository.
 
 Before changing this repository, read **`docs/design-principles.md`**. It lists the core
 invariants (one narrow tool per server, target bound host-side, safe-by-default, sanitize +
