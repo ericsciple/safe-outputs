@@ -5,8 +5,8 @@ A feature-by-feature comparison of this repo's safe outputs against
 recorded so we can decide **one item at a time** what's worth adopting. Nothing here is a
 commitment — it's a map of the gaps.
 
-- **Our surface:** originally 4 operations; now **26** — `add-labels`, `add-comment`, `update-issue`,
-  `create-pull-request` (Class C data path, e2e-proven), plus the 2.1/2.3/2.4 additions.
+- **Our surface:** originally 4 operations; now **27** — `add-labels`, `add-comment`, `update-issue`,
+  `create-pull-request` + `upload-asset` (Class C data path, e2e-proven), plus the 2.1/2.3/2.4 additions.
 - **gh-aw surface:** ~45 safe-output types.
 - **Snapshot date:** 2026-07-19 (inventory); direction/decisions added 2026-07-20. gh-aw refs are from
   its default branch (safe-outputs spec v1.26.0, `pkg/workflow/safe_output_handlers.go`,
@@ -56,7 +56,7 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 > |---|---|---|---|
 > | **A — REST, target bound host-side** | merge/update/close-PR, dispatch-workflow/-repository, assign-/unassign-user, request-reviewers, replace-labels, assign-milestone, submit-review, review-comment | nothing new | ✅ **DONE** — 12 ops shipped (2.3) |
 > | **B — GraphQL-only** | create/update/close-discussion, hide-comment, mark-ready-for-review, resolve-review-thread | the `graphql()` client | ✅ **DONE** — 5 more ops shipped (2.3); ~40-LOC client, no new dep |
-> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | move agent-produced **bytes** out of the discarded overlay → apply host-side via `createCommitOnBranch` (see design below) | ✅ **PROVEN** (2.4) — create-pull-request + push-to-pull-request-branch built + e2e green (PR #22); `upload-*` still open (needs runner creds) |
+> | **C — needs guest→host *data flow*** | **create-pull-request**, `push-to-pull-request-branch`, `upload-asset`, `upload-artifact` | move agent-produced **bytes** out of the discarded overlay → apply host-side via `createCommitOnBranch` (see design below) | ✅ **PROVEN** (2.4/2.10) — create-pull-request + push-to-pull-request-branch + **upload-asset** built + e2e green (PR #22; upload-asset live-verified); only `upload-artifact` open (Class D, needs runner creds) |
 > | **D — needs special runner creds** | `upload-artifact` (`ACTIONS_RUNTIME_TOKEN`), `create-check-run` (checks:write) | host-side wiring | 🔧 host has them; wiring only |
 > | **E — gh-aw constructs, not GitHub writes** | `staged`/preview, `comment-memory`, `create-agent-session`, threat-detection | design, not an API port | signals DONE (2.2); rest is policy |
 > | **B+ — heavier GraphQL (needs product decisions)** | Projects V2 (`create/update-project`, status-update, `set-issue-field`), `set-issue-type`, `link-sub-issue`, code-scanning | GraphQL + a **target/config decision** (which project? which field?) | ⏸️ **deferred pending a decision** (not a portability blocker) |
@@ -131,7 +131,9 @@ We implement **4**; gh-aw has ~45. Grouped by how relevant they are to us:
 - [ ] Projects (`create-project`, `update-project`, `create-project-status-update`), `set-issue-field`,
   `set-issue-type`, `link-sub-issue` — **B+** (GraphQL proven, but need "which project/field/type?").
 - [ ] Code scanning (`create-code-scanning-alert`, `autofix-code-scanning-alert`), `update-release` — niche.
-- [ ] `upload-asset`, `upload-artifact` — **Class C/D** (bytes + runner creds).
+- [x] `upload-asset` — **Class C** (commits agent bytes to an orphan `assets/<workflow>` branch via
+  `createCommitOnBranch`, returns a raw URL; `GITHUB_TOKEN` only, zero deps). `upload-artifact` remains
+  **Class D** (Actions artifact store — needs `ACTIONS_RUNTIME_TOKEN` + the v4 artifact protocol).
 - [ ] `reply-to-pull-request-review-comment`, `dismiss-pull-request-review` — niche (need extra ids).
 - [ ] `call-workflow`, `comment-memory`, `create-check-run`, `create-agent-session`, `assign-to-agent` —
   gh-aw constructs / special creds (**D/E**).
@@ -487,8 +489,9 @@ safe everywhere and apply throughout.
 - [x] **Guest→host file-change path (Class C gate — see §2.0). DONE + e2e-proven (2.4).** The guest
   `create-pull-request`/`push-to-pull-request-branch` helpers detect the workspace change set with git and
   ship it through dispatch; the host commits via `createCommitOnBranch` (signed) + opens the PR. Verified
-  end-to-end (PR #22). `upload-asset`/`upload-artifact` remain (need runner creds), but the **data path
-  that gated full parity is proven**.
+  end-to-end (PR #22). `upload-asset` now rides the same path (Class C, orphan `assets/` branch, live-verified
+  2.10); only `upload-artifact` remains (Class D — Actions artifact store, needs `ACTIONS_RUNTIME_TOKEN`),
+  but the **data path that gated full parity is proven**.
 
 **P1**
 - [x] `remove-labels`, `close-issue`, `create-discussion`.
