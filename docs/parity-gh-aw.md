@@ -273,9 +273,10 @@ gh-aw per-type options we **don't** have:
 Decisions for §3. gh-aw is the proven pattern, so where we differ we adopt theirs unless our
 stronger-isolation model calls for a safer default. Nothing implemented yet — this is the plan.
 
-1. **[~] `max` — adopt gh-aw semantics (call-count), retire ours (per-call cap).** *(safe-outputs side
+1. **[x] `max` — adopt gh-aw semantics (call-count), retire ours (per-call cap).** *(safe-outputs side
    DONE — `src/limits.js` `claimCall`; harness-side per-step `MCP_STATE_DIR`/GUID wiring in microvm-agent
-   NOT done — falls back to a `RUNNER_TEMP` dir today.)*
+   DONE — `src/mcp-state.js` `assignMcpStateDirs`, minted once per run in `main.js`, teardown removes only
+   the GUID-scoped dir.)*
    - `--max N` = at most **N successful calls** to this tool **per run** (gh-aw counts calls, not
      items). For `add-labels`, `--max` also caps labels **per call** (gh-aw's dual use). Defaults:
      **10** generally, **1** for create-issue (match gh-aw). This replaces our current `add-labels
@@ -493,8 +494,8 @@ safe everywhere and apply throughout.
 - [x] `remove-labels`, `close-issue`, `create-discussion`.
 - [x] Opt-in **URL domain allow-listing** (reject on violation). *(protocol filter still deferred — §4.1.)*
 - [ ] **`staged`/preview** (dry-run: log instead of write).
-- [~] Run-wide **op-count** enforcement (§3.1(1)). *(safe-outputs `claimCall` DONE; harness `MCP_STATE_DIR`
-  per-step isolation NOT wired — see §3.1(1).)*
+- [x] Run-wide **op-count** enforcement (§3.1(1)). *(safe-outputs `claimCall` + harness per-step
+  `MCP_STATE_DIR`/GUID isolation both DONE — see §3.1(1).)*
 
 **P2 — heavier / niche**
 - [x] Cross-repo (`target-repo`/`allowed-repos`) + `target:*`/explicit number — **as author-supplied flags,
